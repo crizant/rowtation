@@ -92,10 +92,6 @@ Open http://localhost:8080. Deploy that directory to a static host; a backend
 service is not required by the planned architecture. Packaging does not publish
 the website. Test imports and downloads against the deployed origin before release.
 
-Automatic deployment to Cloudflare Pages is configured through GitHub Actions.
-See [deployment setup and activation](docs/deployment.md) for credentials, status
-and manual deployment instructions.
-
 ## Project layout
 
 ```text
