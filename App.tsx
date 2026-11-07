@@ -1,6 +1,7 @@
-import { cleanup, Clipboard, keymap, mount, platform, Scroll, signal, Text, View, windowSize } from "nsh";
+import { cleanup, Clipboard, Image, keymap, mount, platform, Scroll, signal, Text, View, windowSize } from "nsh";
 import { Button as BaseButton, Toolbar } from "nsh/base";
 import { BrowserImport, BrowserStyles, DocumentSession, ImportSource, type ColumnMetadata, type ColumnProfile, type DocumentMetadata, type ImportAnalysis, type LocalImport } from "rowtation/native";
+import appIcon from "./assets/icon.svg";
 import { ActionList, ActionRow } from "./components/ActionList";
 import { Badge } from "./components/Badge";
 import { Button } from "./components/Button";
@@ -191,9 +192,7 @@ function Home(props: { dragging: boolean; onPick: () => void; onPaste: () => voi
       <View class="flex-1 items-center justify-center px-8 py-16">
         <View class="w-full max-w-[600px] items-center gap-8">
           <View class="items-center gap-4">
-            <View class="h-16 w-16 items-center justify-center rounded-2xl border border-border/60 bg-background shadow-md">
-              <Icon name="arrows-clockwise" class="h-8 w-8" />
-            </View>
+            <Image src={appIcon} accessibilityElementsHidden class="h-16 w-16" />
             <View class="items-center gap-1.5">
               <Text class="text-3xl font-semibold tracking-tight text-foreground">Rowtation</Text>
               <Text class="text-sm text-muted-foreground">Import and inspect CSV and TSV.</Text>

@@ -1,5 +1,4 @@
 import { Image, token } from "nsh";
-import arrowsClockwise from "./icons/arrows-clockwise.svg";
 import caretLeft from "./icons/caret-left.svg";
 import caretRight from "./icons/caret-right.svg";
 import check from "./icons/check.svg";
@@ -13,7 +12,6 @@ import x from "./icons/x.svg";
 
 /** Phosphor icons (regular weight, MIT), vendored in `components/icons`. */
 const icons = {
-  "arrows-clockwise": arrowsClockwise,
   "caret-left": caretLeft,
   "caret-right": caretRight,
   check,
