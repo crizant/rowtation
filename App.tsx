@@ -12,7 +12,7 @@ import { Icon } from "./components/Icon";
 import { Input } from "./components/Input";
 import { Inspector } from "./components/Inspector";
 import { Checkbox } from "./components/Checkbox";
-import { diagnosticsOn, measurements, record, timed, timeFrame, wasmMemory } from "./components/diagnostics";
+import { diagnosticsOn, measurements, record, timed, timeToNextFrame, wasmMemory } from "./components/diagnostics";
 import { ValueDialog } from "./components/ValueDialog";
 
 interface OpenDocument {
@@ -62,6 +62,8 @@ function DocumentView(props: { document: OpenDocument; onClose: () => void; onIm
     selection.set(cell);
     if (column()?.id === columnId) return;
     run++;
+    // Release the abandoned scan in Rust; finished profiles stay cached.
+    if (progress() != null) props.document.session.cancelProfile();
     progress.set(null);
     profile.set(null);
     column.set(props.document.columns.find(item => item.id === columnId) ?? null);
@@ -312,7 +314,7 @@ export function App() {
       const document: OpenDocument = { session, metadata, columns, name: source.name,
         dispose: () => { if (live) { live = false; session.dispose(); } } };
       active.set(document);
-      timeFrame("First document frame", `${metadata.columnCount} columns`);
+      timeToNextFrame("Document open to next frame", `${metadata.columnCount} columns`);
       // The session holds its own data; release the source bytes now.
       source.dispose(); draft.set(null); analysis.set(null); paste.set(""); mode.set(null);
     } catch (cause) { candidate?.dispose(); fail(cause); }

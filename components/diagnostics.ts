@@ -23,11 +23,15 @@ export function timed<T>(label: string, run: () => T, detail?: () => string): T 
   return result;
 }
 
-/** Time from now to the next frame: the NSH update, layout and paint a change caused. */
-export function timeFrame(label: string, detail = "") {
+/**
+ * Time from now until the next animation frame callback: the synchronous NSH update
+ * plus any wait for the frame. It ends before that frame's layout and paint, so it
+ * is not a paint time.
+ */
+export function timeToNextFrame(label: string, detail = "") {
   if (!measuring()) return;
   const started = performance.now();
-  requestAnimationFrame(() => record(label, performance.now() - started, detail));
+  requestAnimationFrame(() => record(label, performance.now() - started, detail ? `${detail}; excludes paint` : "excludes paint"));
 }
 
 export function wasmMemory() { return Diagnostics.memory().wasmBytes; }

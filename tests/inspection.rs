@@ -166,9 +166,57 @@ fn sliced_profiles_match_whole_profiles_and_restart_on_another_column() {
         .map(|v| (v.value.as_str(), v.count))
         .collect();
     assert_eq!(values, [("Sydney", 334), ("Perth", 333)]);
-    // Cached profiles return in one step.
-    assert!(sliced.profile_step(city, 1).unwrap().profile.is_some());
+    // Cached profiles return in one step and survive cancelling another scan.
+    assert_eq!(sliced.profile_step(id, 600).unwrap().scanned, 600);
+    sliced.cancel_profile();
+    let cached = sliced.profile_step(city, 1).unwrap().profile.unwrap();
+    assert_eq!(cached.unique_count, 3);
+    // A cancelled scan is released: the column starts again from the first row.
+    assert_eq!(sliced.profile_step(id, 10).unwrap().scanned, 10);
+    sliced.cancel_profile();
+    sliced.cancel_profile();
+    assert_eq!(sliced.profile_step(id, 10).unwrap().scanned, 10);
+    assert_eq!(sliced.profile(id).unwrap().unique_count, 1000);
     assert!(sliced.profile_step(999, 1).is_err());
+}
+
+#[test]
+fn common_values_rank_by_count_then_text_in_any_table_order() {
+    let rank = |values: &[String]| {
+        let input = format!("value\n{}\n", values.join("\n"));
+        let mut session =
+            DocumentSession::new(input.into_bytes(), ImportOptions::default()).unwrap();
+        let profile = session.profile(session.columns()[0].id).unwrap();
+        profile
+            .common_values
+            .into_iter()
+            .map(|v| (v.value, v.count))
+            .collect::<Vec<_>>()
+    };
+    let owned = |items: &[&str]| items.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+    // Ties order by UTF-8 text; empty text never ranks.
+    let tied = owned(&["雪", "b", "", "", "", "🦀", "a", "é", "a", "雪"]);
+    assert_eq!(
+        rank(&tied),
+        [("a", 2), ("雪", 2), ("b", 1), ("é", 1), ("🦀", 1)].map(|(v, c)| (v.to_owned(), c))
+    );
+    let mut reversed = tied.clone();
+    reversed.reverse();
+    assert_eq!(rank(&reversed), rank(&tied));
+
+    // Many distinct values: compare with a full sort.
+    let values: Vec<String> = (0..20_000u32)
+        .map(|i| format!("v{}", (i.wrapping_mul(7919) % 4999) % (1 + i % 97)))
+        .collect();
+    let mut counts = std::collections::HashMap::<&str, u32>::new();
+    for value in &values {
+        *counts.entry(value).or_default() += 1;
+    }
+    let mut expected: Vec<(String, u32)> =
+        counts.into_iter().map(|(v, c)| (v.to_owned(), c)).collect();
+    expected.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    expected.truncate(5);
+    assert_eq!(rank(&values), expected);
 }
 
 #[test]

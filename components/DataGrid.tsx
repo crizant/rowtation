@@ -1,7 +1,7 @@
 import { computed, platform, signal, Text, View, windowSize } from "nsh";
 import { DataTable, type DataTableRange, type DataTableSelection } from "nsh/base";
 import type { CellSnapshot, ColumnMetadata, DocumentMetadata, DocumentSession, RowsSnapshot, RowWindow } from "rowtation/native";
-import { measuring, record, timeFrame } from "./diagnostics";
+import { measuring, record, timeToNextFrame } from "./diagnostics";
 
 /** Grid cells show at most this many UTF-8 bytes; the inspector reads whole values on demand. */
 export const PREVIEW_BYTES = 512;
@@ -34,11 +34,13 @@ export function DataGrid(props: {
   let loadedColumns: DataTableRange = { start: 0, end: 0 };
   function fetch(window: RowWindow) {
     if (!measuring()) return props.session.rows(window);
-    const rust = props.session.measureRows(window);
     const started = performance.now();
-    const snapshot = props.session.rows(window);
+    const snapshot = props.session.rows({ ...window, measure: true });
     const total = performance.now() - started;
-    record("Row window", total, `${snapshot.rows.length} rows × ${window.columnLimit ?? props.metadata.columnCount} columns; Rust ${rust.toFixed(2)} ms, bridge ${Math.max(0, total - rust).toFixed(2)} ms`);
+    // One call: Rust times its own work; the rest of the same call is an estimate of
+    // the copy into JS plus call overhead, limited by the browser's timer resolution.
+    const rust = snapshot.rustMs ?? 0;
+    record("Row window", total, `${snapshot.rows.length} rows × ${window.columnLimit ?? props.metadata.columnCount} columns; Rust ${rust.toFixed(2)} ms measured, transfer ≈${Math.max(0, total - rust).toFixed(2)} ms estimated`);
     return snapshot;
   }
   function load() {
@@ -54,7 +56,7 @@ export function DataGrid(props: {
     }
     loadedColumns = columns;
     rows.set({ documentId: props.metadata.id, revision: props.metadata.revision, offset: start, columnOffset: columns.start, rows: snapshots });
-    timeFrame("Grid update", `${snapshots.length} rows × ${columns.end - columns.start} columns`);
+    timeToNextFrame("Grid update to next frame", `${snapshots.length} rows × ${columns.end - columns.start} columns`);
   }
   load();
   // Objects keyed by column ID hold only the loaded columns; the table shows others empty until they load.

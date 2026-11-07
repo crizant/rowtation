@@ -169,6 +169,8 @@ pub(crate) fn analyze(input: &[u8], filename: &str) -> Result<ImportAnalysis, En
     })
 }
 
+/// Most frequent nonempty values reported per column.
+const COMMON_VALUES: usize = 5;
 /// Bytes of each frequent value copied into a profile, cut on a character boundary.
 pub const FREQUENT_VALUE_PREVIEW_BYTES: usize = 256;
 
@@ -280,19 +282,21 @@ impl ProfileJob {
         if end < rows.len() {
             return None;
         }
-        let mut top: Vec<(&str, u32)> = self
-            .table
-            .iter()
-            .map(|&(_, row, count)| (text(row), count))
-            .filter(|(value, _)| !value.is_empty())
-            .collect();
-        // Only five entries are needed, so avoid sorting the whole distinct-value set.
+        // Keep the five best by count, then text, while walking the table once. The
+        // order is total over distinct texts, so table order cannot change the result.
         let order = |a: &(&str, u32), b: &(&str, u32)| b.1.cmp(&a.1).then_with(|| a.0.cmp(b.0));
-        if top.len() > 5 {
-            top.select_nth_unstable_by(5, order);
-            top.truncate(5);
+        let mut top: Vec<(&str, u32)> = Vec::with_capacity(COMMON_VALUES + 1);
+        for &(_, row, count) in &self.table {
+            let candidate = (text(row), count);
+            if candidate.0.is_empty()
+                || top.len() == COMMON_VALUES && order(&candidate, &top[COMMON_VALUES - 1]).is_ge()
+            {
+                continue;
+            }
+            let at = top.partition_point(|item| order(item, &candidate).is_lt());
+            top.insert(at, candidate);
+            top.truncate(COMMON_VALUES);
         }
-        top.sort_unstable_by(order);
         Some(ColumnProfile {
             column_id: self.column_id,
             kind: "Text".into(),

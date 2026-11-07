@@ -187,7 +187,11 @@ mod browser {
     }
 
     /// Read the file into one Rust buffer, a slice at a time, so the browser never
-    /// holds a second full copy. Returns None when the request goes stale mid-read.
+    /// holds a second full copy. Returns None when the request goes stale mid-read,
+    /// dropping what was read. The buffer is reserved once, at the file size, when the
+    /// first slice arrives for a current request, so a read cancelled before then
+    /// allocates nothing. Growing per slice instead measured worse: WASM memory
+    /// reached 2.5 times the file size from reallocation copies, and never shrinks.
     async fn read(file: &File, id: u64, generation: &Cell<u64>) -> Result<Option<Vec<u8>>, String> {
         if file.size() > usize::MAX as f64 {
             return Err(
@@ -195,10 +199,7 @@ mod browser {
             );
         }
         let size = file.size() as usize;
-        let mut bytes = Vec::new();
-        bytes
-            .try_reserve_exact(size)
-            .map_err(|_| "This tab does not have enough memory to read the file.")?;
+        let mut bytes: Vec<u8> = Vec::new();
         while bytes.len() < size {
             let start = bytes.len();
             let end = start.saturating_add(READ_SLICE).min(size);
@@ -215,6 +216,11 @@ mod browser {
             let read = array.length() as usize;
             if read == 0 {
                 return Err(READ_ERROR.into());
+            }
+            if bytes.capacity() - start < read {
+                bytes
+                    .try_reserve_exact(size.max(start + read) - start)
+                    .map_err(|_| "This tab does not have enough memory to read the file.")?;
             }
             bytes.resize(start + read, 0);
             array.copy_to(&mut bytes[start..]);

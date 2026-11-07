@@ -417,8 +417,10 @@ fn column_ranges_copy_only_requested_columns() {
             .as_deref(),
         Some("INVALID_WINDOW")
     );
-    assert!(session.measure_rows(window(0, 2)).unwrap() >= 0.0);
-    assert!(session.measure_rows(window(3, 1)).is_err());
+    assert_eq!(session.rows(window(0, 2)).unwrap().rust_ms, None);
+    let mut measured = window(0, 2);
+    measured.measure = Some(true);
+    assert!(session.rows(measured).unwrap().rust_ms.unwrap() >= 0.0);
 }
 
 #[test]

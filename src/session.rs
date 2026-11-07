@@ -46,6 +46,8 @@ pub struct RowWindow {
     /// Copy at most this many UTF-8 bytes of each value, cut on a character
     /// boundary and marked truncated. Defaults to whole values.
     pub preview_bytes: Option<u32>,
+    /// Diagnostics: report rustMs. Defaults to false.
+    pub measure: Option<bool>,
 }
 
 /// Small document snapshot; revision and dirty remain unchanged by reads/export.
@@ -180,6 +182,9 @@ pub struct RowsSnapshot {
     pub column_offset: u32,
     /// Bounded row snapshots; fewer than limit at the end of the document.
     pub rows: Vec<RowSnapshot>,
+    /// When the window asked to measure: milliseconds Rust spent building this
+    /// snapshot, at the clock's resolution. Excludes the copy into JS.
+    pub rust_ms: Option<f64>,
 }
 
 /// Retains one Rust-owned document. Register cleanup(() => session.dispose()) in
@@ -252,6 +257,7 @@ impl DocumentSession {
     /// columns. Values are whole unless previewBytes is set. An offset past rowCount,
     /// a columnOffset past columnCount or a limit above 256 throws INVALID_WINDOW.
     pub fn rows(&self, window: RowWindow) -> Result<RowsSnapshot, EngineError> {
+        let started = window.measure.unwrap_or(false).then(now_ms);
         let rows = self
             .document
             .window(window.offset as usize, window.limit as usize)?;
@@ -269,7 +275,7 @@ impl DocumentSession {
         let preview = window
             .preview_bytes
             .map_or(usize::MAX, |bytes| bytes as usize);
-        Ok(RowsSnapshot {
+        let mut snapshot = RowsSnapshot {
             document_id: self.document.id().into(),
             revision: self.document.revision(),
             offset: window.offset,
@@ -288,17 +294,10 @@ impl DocumentSession {
                         .collect(),
                 })
                 .collect(),
-        })
-    }
-
-    /// Diagnostics: milliseconds Rust spends building this window, without sending
-    /// it to JS. Compare with the time a rows call takes to separate bridge cost.
-    pub fn measure_rows(&self, window: RowWindow) -> Result<f64, EngineError> {
-        let start = now_ms();
-        let rows = self.rows(window)?;
-        let elapsed = now_ms() - start;
-        drop(rows);
-        Ok(elapsed)
+            rust_ms: None,
+        };
+        snapshot.rust_ms = started.map(|started| now_ms() - started);
+        Ok(snapshot)
     }
 
     /// Read one cell by stable IDs discovered through rows and columns.
@@ -315,6 +314,12 @@ impl DocumentSession {
                 return Ok(profile);
             }
         }
+    }
+
+    /// Drop an unfinished profile scan and its distinct-value table. Finished profiles
+    /// stay cached. Call when the UI abandons the column it was profiling.
+    pub fn cancel_profile(&mut self) {
+        self.job = None;
     }
 
     /// Count at most `rows` more rows of a column's statistics and report progress.

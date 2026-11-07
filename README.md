@@ -60,9 +60,10 @@ column range and to 512-byte previews; the grid fetches only what is in view and
 the inspector reads whole values on demand. Column statistics are exact and are
 counted in slices between frames. Parsing remains synchronous on the browser thread.
 
-Press Ctrl+Shift+D to show local diagnostics: read, inspect, parse, row-window
-(Rust versus bridge), grid-update and profiling times plus WebAssembly memory, in
-the panel and console only. Nothing is recorded while it is off or sent anywhere.
+Press Ctrl+Shift+D to show local diagnostics: read, inspect, parse and profiling
+times; row-window time with Rust's measured share and an estimated transfer share
+from the same call; time from an update to the next animation frame (which excludes
+paint); and WebAssembly memory. They appear in the panel and console only. Nothing is recorded while it is off or sent anywhere.
 `cargo test --release --test stress -- --ignored --nocapture` runs the large-input
 stress tests and a native benchmark (`ROWTATION_BENCH_MB`, default 64).
 
