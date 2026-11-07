@@ -27,7 +27,7 @@ it is no longer needed.
 
 `nsh test` runs the Rust fixtures and production UI workflows. These cover UTF-8
 CSV/TSV parsing, explicit headers, failed import preservation, successful
-replacement, disposal, exact profile counts, whole values, cached summaries,
+replacement, disposal, exact profile counts, previews with whole-value view and copy, diagnostics, cached summaries,
 virtualized scrolling, keyboard selection and responsive layouts. The wide-table
 case uses 512 columns and a 2160-point viewport, then narrows the viewport and
 navigates to an offscreen column. Two workflows cover the large-import warning:
@@ -73,10 +73,12 @@ UI. The existing internal serializer remains available to Rust callers.
 
 Parsing and first-time column profiling are synchronous on the browser thread.
 There are no size caps. Above 8 MiB, 100,000 records, 512 columns, 1,000,000
-fields or a 1 MiB field, the review step asks for confirmation. These thresholds
+fields or a 1 MiB field, the review step asks for confirmation; files above 8 MiB
+are confirmed before the browser reads them. These thresholds
 are advisory, not large-file responsiveness benchmarks; very large input can make
-the tab unresponsive or exhaust its memory. The grid and inspector show whole
-values; they are not full-text editors. File selection/drop requires a modern browser. Clipboard
+the tab unresponsive or exhaust its memory. The grid shows 512-byte previews; the
+inspector's full-value dialog renders 32,768 characters at a time and copy always
+takes the whole value. They are not full-text editors. File selection/drop requires a modern browser. Clipboard
 permission failures leave a manual paste field available.
 
 The scoped duplicate-scrollbar CSS depends on NSH 0.4's browser DOM classes;

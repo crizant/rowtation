@@ -1,6 +1,13 @@
 //! Detection and profiling stay with the authoritative Rust dataset.
-use crate::{error::EngineError, session::saturating_u32};
+use crate::{
+    document::{CellValue, Document},
+    error::EngineError,
+    session::{prefix, saturating_u32},
+};
+use hashbrown::{HashTable, hash_table::Entry};
 use nsh_core::prelude::*;
+use rustc_hash::FxBuildHasher;
+use std::hash::BuildHasher;
 
 /// Input size above which the import review asks for confirmation.
 pub const LARGE_INPUT_BYTES: usize = 8 * 1024 * 1024;
@@ -89,79 +96,91 @@ impl ImportDetector {
     /// input for both separators. Extension breaks ties only; users can override.
     /// Any size is accepted; check the chosen separator's `large` before importing.
     pub fn inspect(input: Vec<u8>, filename: String) -> Result<ImportAnalysis, EngineError> {
-        let text = std::str::from_utf8(&input).map_err(|_| {
-            EngineError::new(
-                "INVALID_UTF8",
-                "Save the file as UTF-8 CSV or TSV and try again.",
-            )
-        })?;
-        let bytes = text.as_bytes();
-        let mut counts = [0usize; 2];
-        let (mut comma, mut tab) = (Tally::default(), Tally::default());
-        let mut quoted = false;
-        let mut records = 0;
-        let mut i = 0;
-        while i < bytes.len() {
-            let byte = bytes[i];
-            if byte == b'"' {
-                if quoted && bytes.get(i + 1) == Some(&b'"') {
-                    i += 1;
-                } else {
-                    quoted = !quoted;
-                }
-            } else if !quoted {
-                match byte {
-                    b',' => {
-                        comma.end_field(i, i + 1);
-                        if records < 32 {
-                            counts[0] += 1;
-                        }
-                    }
-                    b'\t' => {
-                        tab.end_field(i, i + 1);
-                        if records < 32 {
-                            counts[1] += 1;
-                        }
-                    }
-                    b'\n' | b'\r' => {
-                        let next = if byte == b'\r' && bytes.get(i + 1) == Some(&b'\n') {
-                            i + 2
-                        } else {
-                            i + 1
-                        };
-                        comma.end_record(i, next);
-                        tab.end_record(i, next);
-                        records += 1;
-                        i = next;
-                        continue;
-                    }
-                    _ => (),
-                }
-            }
-            i += 1;
-        }
-        if comma.field_start < bytes.len() || comma.fields > 0 {
-            comma.end_record(bytes.len(), bytes.len());
-            tab.end_record(bytes.len(), bytes.len());
-            records += 1;
-        }
-        let tab_wins = counts[1] > counts[0]
-            || (counts[0] == counts[1] && filename.to_ascii_lowercase().ends_with(".tsv"));
-        Ok(ImportAnalysis {
-            delimiter: if tab_wins { "\t" } else { "," }.into(),
-            ambiguous: counts[0] == counts[1] || (counts[0] > 0 && counts[1] > 0),
-            byte_length: saturating_u32(input.len()),
-            comma: comma.size(records, input.len()),
-            tab: tab.size(records, input.len()),
-        })
+        analyze(&input, &filename)
     }
 }
 
-/// A frequent text value, with its full text.
+/// The scan behind `ImportDetector.inspect` and `ImportSource.inspect`.
+pub(crate) fn analyze(input: &[u8], filename: &str) -> Result<ImportAnalysis, EngineError> {
+    let text = std::str::from_utf8(input).map_err(|_| {
+        EngineError::new(
+            "INVALID_UTF8",
+            "Save the file as UTF-8 CSV or TSV and try again.",
+        )
+    })?;
+    let bytes = text.as_bytes();
+    let mut counts = [0usize; 2];
+    let (mut comma, mut tab) = (Tally::default(), Tally::default());
+    let mut quoted = false;
+    let mut records = 0;
+    let mut i = 0;
+    while i < bytes.len() {
+        let byte = bytes[i];
+        if byte == b'"' {
+            if quoted && bytes.get(i + 1) == Some(&b'"') {
+                i += 1;
+            } else {
+                quoted = !quoted;
+            }
+        } else if !quoted {
+            match byte {
+                b',' => {
+                    comma.end_field(i, i + 1);
+                    if records < 32 {
+                        counts[0] += 1;
+                    }
+                }
+                b'\t' => {
+                    tab.end_field(i, i + 1);
+                    if records < 32 {
+                        counts[1] += 1;
+                    }
+                }
+                b'\n' | b'\r' => {
+                    let next = if byte == b'\r' && bytes.get(i + 1) == Some(&b'\n') {
+                        i + 2
+                    } else {
+                        i + 1
+                    };
+                    comma.end_record(i, next);
+                    tab.end_record(i, next);
+                    records += 1;
+                    i = next;
+                    continue;
+                }
+                _ => (),
+            }
+        }
+        i += 1;
+    }
+    if comma.field_start < bytes.len() || comma.fields > 0 {
+        comma.end_record(bytes.len(), bytes.len());
+        tab.end_record(bytes.len(), bytes.len());
+        records += 1;
+    }
+    let tab_wins = counts[1] > counts[0]
+        || (counts[0] == counts[1] && filename.to_ascii_lowercase().ends_with(".tsv"));
+    Ok(ImportAnalysis {
+        delimiter: if tab_wins { "\t" } else { "," }.into(),
+        ambiguous: counts[0] == counts[1] || (counts[0] > 0 && counts[1] > 0),
+        byte_length: saturating_u32(input.len()),
+        comma: comma.size(records, input.len()),
+        tab: tab.size(records, input.len()),
+    })
+}
+
+/// Bytes of each frequent value copied into a profile, cut on a character boundary.
+pub const FREQUENT_VALUE_PREVIEW_BYTES: usize = 256;
+
+/// A frequent text value. Long values are previews; counts are always exact.
 #[derive(JsObject, Default, Clone)]
 pub struct FrequentValue {
-    /// Literal text, never interpreted as markup.
+    /// Literal text, never interpreted as markup; at most 256 UTF-8 bytes.
     pub value: String,
+    /// UTF-8 length of the whole value.
+    pub byte_length: u32,
+    /// True when value holds only a prefix.
+    pub truncated: bool,
     /// Number of occurrences in this column.
     pub count: u32,
 }
@@ -181,4 +200,117 @@ pub struct ColumnProfile {
     pub missing_count: u32,
     /// Up to five most frequent nonempty values, ordered by count then text.
     pub common_values: Vec<FrequentValue>,
+}
+
+/// Progress of an incremental column profile.
+#[derive(JsObject, Default)]
+pub struct ProfileProgress {
+    /// Document-scoped stable column identity.
+    pub column_id: u32,
+    /// Rows counted so far.
+    pub scanned: u32,
+    /// Rows in the document.
+    pub total: u32,
+    /// The finished profile once every row is counted; null while scanning.
+    pub profile: Option<ColumnProfile>,
+}
+
+/// Counts one column in slices so a caller can yield between them. Distinct values
+/// are entries of (hash, first row position, count): the text stays in the document.
+pub(crate) struct ProfileJob {
+    column_id: u32,
+    index: usize,
+    next: usize,
+    table: HashTable<(u64, u32, u32)>,
+    empty: u32,
+    missing: u32,
+}
+
+impl ProfileJob {
+    pub(crate) fn new(column_id: u32, index: usize) -> Self {
+        Self {
+            column_id,
+            index,
+            next: 0,
+            table: HashTable::new(),
+            empty: 0,
+            missing: 0,
+        }
+    }
+
+    pub(crate) fn column_id(&self) -> u32 {
+        self.column_id
+    }
+
+    pub(crate) fn scanned(&self) -> usize {
+        self.next
+    }
+
+    /// Count up to `limit` more rows; returns the profile once every row is counted.
+    /// The document must be the one the job started on, unchanged since.
+    pub(crate) fn step(&mut self, document: &Document, limit: usize) -> Option<ColumnProfile> {
+        let rows = &document.rows;
+        let index = self.index;
+        let text = |row: u32| match rows[row as usize].cells().get(index) {
+            Some(CellValue::Text(value)) => value.as_str(),
+            _ => "",
+        };
+        let end = self.next.saturating_add(limit).min(rows.len());
+        for (position, row) in rows.iter().enumerate().take(end).skip(self.next) {
+            let Some(CellValue::Text(value)) = row.cells().get(index) else {
+                self.missing += 1;
+                continue;
+            };
+            if value.is_empty() {
+                self.empty += 1;
+            }
+            let hash = FxBuildHasher.hash_one(value.as_str());
+            match self.table.entry(
+                hash,
+                |&(h, row, _)| h == hash && text(row) == value,
+                |&(h, _, _)| h,
+            ) {
+                Entry::Occupied(mut entry) => entry.get_mut().2 += 1,
+                Entry::Vacant(entry) => {
+                    entry.insert((hash, position as u32, 1));
+                }
+            }
+        }
+        self.next = end;
+        if end < rows.len() {
+            return None;
+        }
+        let mut top: Vec<(&str, u32)> = self
+            .table
+            .iter()
+            .map(|&(_, row, count)| (text(row), count))
+            .filter(|(value, _)| !value.is_empty())
+            .collect();
+        // Only five entries are needed, so avoid sorting the whole distinct-value set.
+        let order = |a: &(&str, u32), b: &(&str, u32)| b.1.cmp(&a.1).then_with(|| a.0.cmp(b.0));
+        if top.len() > 5 {
+            top.select_nth_unstable_by(5, order);
+            top.truncate(5);
+        }
+        top.sort_unstable_by(order);
+        Some(ColumnProfile {
+            column_id: self.column_id,
+            kind: "Text".into(),
+            unique_count: saturating_u32(self.table.len()),
+            empty_count: self.empty,
+            missing_count: self.missing,
+            common_values: top
+                .into_iter()
+                .map(|(value, count)| {
+                    let shown = prefix(value, FREQUENT_VALUE_PREVIEW_BYTES);
+                    FrequentValue {
+                        value: shown.into(),
+                        byte_length: saturating_u32(value.len()),
+                        truncated: shown.len() < value.len(),
+                        count,
+                    }
+                })
+                .collect(),
+        })
+    }
 }

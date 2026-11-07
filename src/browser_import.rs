@@ -1,17 +1,24 @@
 //! Browser file I/O through the registered NSH API. No data processing in JavaScript.
+use crate::source::ImportSource;
 use nsh_core::prelude::*;
 
-/// A local file, or an actionable file-read error. Bytes never leave the browser.
+/// A picked or dropped file: read and waiting in Rust, deferred until the user confirms
+/// a large read, or an actionable error. Bytes never leave the browser or enter JS.
 #[derive(JsObject, Default)]
 pub struct LocalImport {
     /// Local display name, treated as text.
     pub name: String,
-    /// File bytes, of any size the browser can read.
-    pub bytes: Vec<u8>,
+    /// File size in bytes, known before reading.
+    pub size: f64,
+    /// True when the file is larger than LARGE_INPUT_BYTES and was not read yet.
+    /// Call readDeferred to read it, or cancelPending to drop it.
+    pub deferred: bool,
     /// Read generation, checked again when a queued callback reaches the UI.
     pub request_id: Option<String>,
     /// Read failure, if any; never replaces the active document.
     pub error: Option<String>,
+    /// Milliseconds spent reading the file into WebAssembly memory.
+    pub read_ms: f64,
 }
 
 /// Web-only local file picker and drop integration.
@@ -33,8 +40,36 @@ impl BrowserImport {
         }
     }
 
-    /// Invalidate pending reads when the UI cancels or starts another import workflow.
-    /// The browser read may finish, but its result will no longer be delivered.
+    /// Take the file a delivered LocalImport read, once. Throws when the request is not
+    /// current or was already taken.
+    pub fn take(request_id: String) -> Result<ImportSource, String> {
+        #[cfg(target_arch = "wasm32")]
+        {
+            browser::take(&request_id)
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let _ = request_id;
+            Err("File selection is available in the web application.".into())
+        }
+    }
+
+    /// Read a deferred file after the user confirms. The result arrives through the
+    /// onFile callback with a new request ID. Throws when the request is not current.
+    pub fn read_deferred(request_id: String) -> Result<(), String> {
+        #[cfg(target_arch = "wasm32")]
+        {
+            browser::read_deferred(&request_id)
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let _ = request_id;
+            Err("File selection is available in the web application.".into())
+        }
+    }
+
+    /// Invalidate pending reads when the UI cancels or starts another import workflow,
+    /// and release any deferred or read file. A read in progress stops at its next slice.
     pub fn cancel_pending() {
         #[cfg(target_arch = "wasm32")]
         browser::cancel_pending();
@@ -75,19 +110,70 @@ impl BrowserImport {
 #[cfg(target_arch = "wasm32")]
 mod browser {
     use super::*;
-    use std::{cell::Cell, rc::Rc};
+    use crate::{diagnostics::now_ms, inspection::LARGE_INPUT_BYTES};
+    use std::{
+        cell::{Cell, RefCell},
+        rc::Rc,
+    };
     use wasm_bindgen::{JsCast, JsValue, closure::Closure};
     use wasm_bindgen_futures::{JsFuture, spawn_local};
     use web_sys::{DragEvent, File, HtmlInputElement};
     const INPUT_ID: &str = "rowtation-file-input";
+    /// Bytes per browser read; bounds the transient JS buffer, not the file.
+    const READ_SLICE: usize = 16 * 1024 * 1024;
+    const READ_ERROR: &str = "The browser could not read the file. It may be too large for this tab's memory, or it changed after selection.";
+
+    struct Deferred {
+        id: u64,
+        file: File,
+        callback: Callback<LocalImport>,
+        live: Rc<Cell<bool>>,
+    }
+
     // The adapter already owns one input/listener per app. Workflow cancellation
     // and out-of-order reads invalidate the same generation, not separate tokens.
+    // At most one file waits for confirmation and one read file waits to be taken.
     thread_local! {
         static GENERATION: Rc<Cell<u64>> = Rc::new(Cell::new(0));
+        static DEFERRED: RefCell<Option<Deferred>> = const { RefCell::new(None) };
+        static LOADED: RefCell<Option<(u64, ImportSource)>> = const { RefCell::new(None) };
     }
 
     pub fn cancel_pending() {
         GENERATION.with(|generation| generation.set(generation.get().wrapping_add(1)));
+        DEFERRED.take();
+        LOADED.take();
+    }
+
+    pub fn take(request_id: &str) -> Result<ImportSource, String> {
+        LOADED
+            .with_borrow_mut(|loaded| match loaded.take() {
+                Some((id, source)) if id.to_string() == request_id && is_current(request_id) => {
+                    Some(source)
+                }
+                other => {
+                    *loaded = other;
+                    None
+                }
+            })
+            .ok_or_else(|| "This file is no longer available. Choose it again.".into())
+    }
+
+    pub fn read_deferred(request_id: &str) -> Result<(), String> {
+        let deferred = DEFERRED
+            .with_borrow_mut(|deferred| {
+                deferred.take_if(|d| d.id.to_string() == request_id && is_current(request_id))
+            })
+            .ok_or("This file is no longer available. Choose it again.")?;
+        let generation = GENERATION.with(Rc::clone);
+        deliver(
+            deferred.file,
+            deferred.callback,
+            deferred.live,
+            generation,
+            true,
+        );
+        Ok(())
     }
 
     pub fn is_current(request_id: &str) -> bool {
@@ -100,26 +186,40 @@ mod browser {
             .ok_or("Browser document is unavailable.".into())
     }
 
-    async fn read(file: File) -> LocalImport {
-        let mut result = LocalImport {
-            name: file.name(),
-            ..Default::default()
-        };
-        let lower = result.name.to_ascii_lowercase();
-        if !(lower.ends_with(".csv") || lower.ends_with(".tsv")) {
-            result.error =
-                Some("Choose a .csv or .tsv file. Other formats are not supported yet.".into());
-        } else {
-            match JsFuture::from(file.array_buffer()).await {
-                Ok(buffer) => result.bytes = js_sys::Uint8Array::new(&buffer).to_vec(),
-                Err(_) => {
-                    result.error = Some(
-                        "The browser could not read the file. It may be too large for this tab's memory, or it changed after selection.".into(),
-                    )
-                }
-            }
+    /// Read the file into one Rust buffer, a slice at a time, so the browser never
+    /// holds a second full copy. Returns None when the request goes stale mid-read.
+    async fn read(file: &File, id: u64, generation: &Cell<u64>) -> Result<Option<Vec<u8>>, String> {
+        if file.size() > usize::MAX as f64 {
+            return Err(
+                "This file is larger than WebAssembly memory can address in a browser tab.".into(),
+            );
         }
-        result
+        let size = file.size() as usize;
+        let mut bytes = Vec::new();
+        bytes
+            .try_reserve_exact(size)
+            .map_err(|_| "This tab does not have enough memory to read the file.")?;
+        while bytes.len() < size {
+            let start = bytes.len();
+            let end = start.saturating_add(READ_SLICE).min(size);
+            let slice = file
+                .slice_with_f64_and_f64(start as f64, end as f64)
+                .map_err(|_| READ_ERROR)?;
+            let buffer = JsFuture::from(slice.array_buffer())
+                .await
+                .map_err(|_| READ_ERROR)?;
+            if generation.get() != id {
+                return Ok(None);
+            }
+            let array = js_sys::Uint8Array::new(&buffer);
+            let read = array.length() as usize;
+            if read == 0 {
+                return Err(READ_ERROR.into());
+            }
+            bytes.resize(start + read, 0);
+            array.copy_to(&mut bytes[start..]);
+        }
+        Ok(Some(bytes))
     }
 
     pub fn pick() -> Result<(), String> {
@@ -131,21 +231,57 @@ mod browser {
         Ok(())
     }
 
+    /// Start a new request for the file. Large files wait for confirmation unless
+    /// `confirmed`; others are read and kept for take.
     fn deliver(
         file: File,
         callback: Callback<LocalImport>,
         live: Rc<Cell<bool>>,
         generation: Rc<Cell<u64>>,
+        confirmed: bool,
     ) {
         let id = generation.get().wrapping_add(1);
         generation.set(id);
-        spawn_local(async move {
-            let mut result = read(file).await;
-            result.request_id = Some(id.to_string());
-            if live.get() && generation.get() == id {
+        DEFERRED.take();
+        LOADED.take();
+        let mut result = LocalImport {
+            name: file.name(),
+            size: file.size(),
+            request_id: Some(id.to_string()),
+            ..Default::default()
+        };
+        let lower = result.name.to_ascii_lowercase();
+        if !(lower.ends_with(".csv") || lower.ends_with(".tsv")) {
+            result.error =
+                Some("Choose a .csv or .tsv file. Other formats are not supported yet.".into());
+        } else if !confirmed && result.size > LARGE_INPUT_BYTES as f64 {
+            result.deferred = true;
+            DEFERRED.set(Some(Deferred {
+                id,
+                file,
+                callback: callback.clone(),
+                live: live.clone(),
+            }));
+        } else {
+            spawn_local(async move {
+                let start = now_ms();
+                let read = read(&file, id, &generation).await;
+                if !live.get() || generation.get() != id {
+                    return;
+                }
+                match read {
+                    Ok(Some(bytes)) => {
+                        result.read_ms = now_ms() - start;
+                        LOADED.set(Some((id, ImportSource::new(bytes, result.name.clone()))));
+                    }
+                    Ok(None) => return,
+                    Err(error) => result.error = Some(error),
+                }
                 callback.post(result);
-            }
-        });
+            });
+            return;
+        }
+        callback.post(result);
     }
 
     pub fn listen(callback: Callback<LocalImport>, drag: Callback<bool>) -> Result<Stop, String> {
@@ -176,7 +312,7 @@ mod browser {
         );
         let change = Closure::<dyn FnMut()>::new(move || {
             if let Some(file) = picked.files().and_then(|files| files.get(0)) {
-                deliver(file, changed.clone(), alive.clone(), version.clone());
+                deliver(file, changed.clone(), alive.clone(), version.clone(), false);
             }
             picked.set_value(""); // The same file can be selected again after a failure.
         });
@@ -219,7 +355,7 @@ mod browser {
             depth.set(0);
             drag.post(false);
             if files.length() != 1 {
-                version.set(version.get().wrapping_add(1));
+                cancel_pending();
                 callback.post(LocalImport {
                     request_id: Some(version.get().to_string()),
                     error: Some("Drop one CSV or TSV file at a time.".into()),
@@ -232,6 +368,7 @@ mod browser {
                 callback.clone(),
                 alive.clone(),
                 version.clone(),
+                false,
             );
         });
         document

@@ -62,7 +62,8 @@ architecture for the implemented value, header, delimiter and resource policies.
 - Handle formula-like spreadsheet text explicitly on export. A safe text mode
   must explain any escaping that changes output values.
 - Imports have no size caps. Large input (above 8 MiB, 100,000 records, 512
-  columns, 1,000,000 fields or a 1 MiB field) requires explicit confirmation.
+  columns, 1,000,000 fields or a 1 MiB field) requires explicit confirmation;
+  files above 8 MiB are confirmed before they are read.
   Measure representative browsers before claiming large-file support.
 
 ## Decisions needed during implementation

@@ -1,4 +1,5 @@
 use nsh_app_rowtation::{
+    ImportSource,
     inspection::ImportDetector,
     session::{DocumentSession, ImportOptions},
 };
@@ -80,14 +81,28 @@ fn profiles_distinguish_empty_missing_and_literal_text_and_are_cached() {
 }
 
 #[test]
-fn profiles_bound_frequencies_and_keep_whole_values() {
+fn profiles_count_whole_values_and_return_bounded_previews() {
     let long = "🦀".repeat(100_000);
-    let input = format!("value\n{long}\n{long}\na\nb\nc\nd\ne\nf\n");
+    // Differs from long only in its last character, past the preview.
+    let near = format!("{}x", "🦀".repeat(99_999));
+    let input = format!("value\n{long}\n{near}\n{long}\na\nb\nc\nd\ne\nf\n");
     let mut session = DocumentSession::new(input.into_bytes(), ImportOptions::default()).unwrap();
     let profile = session.profile(session.columns()[0].id).unwrap();
+    assert_eq!(profile.unique_count, 8);
     assert_eq!(profile.common_values.len(), 5);
-    assert_eq!(profile.common_values[0].count, 2);
-    assert_eq!(profile.common_values[0].value, long);
+    let top = &profile.common_values[0];
+    assert_eq!((top.count, top.byte_length as usize), (2, long.len()));
+    assert_eq!(
+        (top.value.as_str(), top.truncated),
+        ("🦀".repeat(64).as_str(), true)
+    );
+    assert_eq!(
+        (
+            profile.common_values[1].value.as_str(),
+            profile.common_values[1].truncated
+        ),
+        ("a", false)
+    );
 }
 
 #[test]
@@ -106,4 +121,77 @@ fn profile_cache_eviction_keeps_results_correct() {
             .value,
         "x"
     );
+}
+
+#[test]
+fn sliced_profiles_match_whole_profiles_and_restart_on_another_column() {
+    let input = format!(
+        "id,city\n{}",
+        (0..1000)
+            .map(|i| format!("{i},{}\n", ["Sydney", "Perth", ""][i % 3]))
+            .collect::<String>()
+    );
+    let mut whole =
+        DocumentSession::new(input.clone().into_bytes(), ImportOptions::default()).unwrap();
+    let mut sliced = DocumentSession::new(input.into_bytes(), ImportOptions::default()).unwrap();
+    let (id, city) = (sliced.columns()[0].id, sliced.columns()[1].id);
+
+    let first = sliced.profile_step(city, 400).unwrap();
+    assert_eq!((first.scanned, first.total), (400, 1000));
+    assert!(first.profile.is_none());
+    // Another column discards the unfinished city scan.
+    assert_eq!(sliced.profile_step(id, 10).unwrap().scanned, 10);
+    assert_eq!(sliced.profile_step(city, 400).unwrap().scanned, 400);
+    assert_eq!(sliced.profile_step(city, 400).unwrap().scanned, 800);
+    let done = sliced.profile_step(city, 400).unwrap();
+    assert_eq!(done.scanned, 1000);
+    let profile = done.profile.unwrap();
+    let expected = whole.profile(city).unwrap();
+    assert_eq!(
+        (
+            profile.unique_count,
+            profile.empty_count,
+            profile.missing_count
+        ),
+        (
+            expected.unique_count,
+            expected.empty_count,
+            expected.missing_count
+        )
+    );
+    assert_eq!((profile.unique_count, profile.empty_count), (3, 333));
+    let values: Vec<_> = profile
+        .common_values
+        .iter()
+        .map(|v| (v.value.as_str(), v.count))
+        .collect();
+    assert_eq!(values, [("Sydney", 334), ("Perth", 333)]);
+    // Cached profiles return in one step.
+    assert!(sliced.profile_step(city, 1).unwrap().profile.is_some());
+    assert!(sliced.profile_step(999, 1).is_err());
+}
+
+#[test]
+fn sources_inspect_and_import_without_another_copy_and_survive_failed_imports() {
+    let text = "name\tcode\n\"Smith, Mia\"\t007\n";
+    let source = ImportSource::from_text(text.into(), "Pasted data".into());
+    assert_eq!(source.byte_length(), text.len() as f64);
+    let analysis = source.inspect().unwrap();
+    let expected = ImportDetector::inspect(text.as_bytes().to_vec(), "Pasted data".into()).unwrap();
+    assert_eq!(analysis.delimiter, expected.delimiter);
+    assert_eq!(analysis.tab.cells, expected.tab.cells);
+
+    let mut options = ImportOptions::default();
+    options.delimiter = Some(";;".into());
+    assert!(DocumentSession::from_source(&source, options).is_err());
+    let mut options = ImportOptions::default();
+    options.delimiter = Some(analysis.delimiter);
+    let session = DocumentSession::from_source(&source, options).unwrap();
+    let column = session.columns()[1].id;
+    assert_eq!(
+        session.read_cell(1, column).unwrap().text.as_deref(),
+        Some("007")
+    );
+    let invalid = ImportSource::from_text(String::new(), "empty.tsv".into());
+    assert_eq!(invalid.inspect().unwrap().comma.records, 0);
 }

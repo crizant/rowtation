@@ -1,6 +1,6 @@
 import { cleanup, Clipboard, keymap, mount, platform, Scroll, signal, Text, View, windowSize } from "nsh";
 import { Button as BaseButton, Toolbar } from "nsh/base";
-import { BrowserImport, BrowserStyles, DocumentSession, ImportDetector, type ColumnMetadata, type ColumnProfile, type DocumentMetadata, type ImportAnalysis, type LocalImport } from "rowtation/native";
+import { BrowserImport, BrowserStyles, DocumentSession, ImportSource, type ColumnMetadata, type ColumnProfile, type DocumentMetadata, type ImportAnalysis, type LocalImport } from "rowtation/native";
 import { ActionList, ActionRow } from "./components/ActionList";
 import { Badge } from "./components/Badge";
 import { Button } from "./components/Button";
@@ -12,6 +12,8 @@ import { Icon } from "./components/Icon";
 import { Input } from "./components/Input";
 import { Inspector } from "./components/Inspector";
 import { Checkbox } from "./components/Checkbox";
+import { diagnosticsOn, measurements, record, timed, timeFrame, wasmMemory } from "./components/diagnostics";
+import { ValueDialog } from "./components/ValueDialog";
 
 interface OpenDocument {
   session: DocumentSession;
@@ -26,14 +28,64 @@ function DocumentView(props: { document: OpenDocument; onClose: () => void; onIm
   const selection = signal<CellSelection | null>(null);
   const column = signal<ColumnMetadata | null>(null);
   const profile = signal<ColumnProfile | null>(null);
+  const progress = signal<number | null>(null);
   const info = signal(false);
+  const full = signal<string | null>(null);
+  const copyLabel = signal("Copy value");
+  const wide = () => windowSize().width >= 900;
+  // Profiling runs in slices between frames; each new column or disposal ends the previous run.
+  let run = 0;
+  cleanup(() => run++);
+  function ensureProfile() {
+    const target = column();
+    if (!target || profile()?.columnId === target.id || progress() != null) return;
+    const id = ++run;
+    let budget = 50_000, slices = 0, blocked = 0, longest = 0;
+    const began = performance.now();
+    const step = () => {
+      if (id !== run) return;
+      const started = performance.now();
+      const result = props.document.session.profileStep(target.id, budget);
+      const elapsed = performance.now() - started;
+      slices++; blocked += elapsed; longest = Math.max(longest, elapsed);
+      // Aim for about 12 ms of counting per slice so input and painting stay responsive.
+      budget = Math.min(4_000_000, Math.max(10_000, Math.round(budget * 12 / Math.max(1, elapsed))));
+      if (result.profile) {
+        profile.set(result.profile); progress.set(null);
+        record("Column profile", performance.now() - began, `${slices} slices, longest ${longest.toFixed(1)} ms, counting ${blocked.toFixed(1)} ms`);
+      }
+      else { progress.set(result.total ? result.scanned / result.total : 0); setTimeout(step, 0); }
+    };
+    step();
+  }
   function select(cell: CellSelection | null, columnId: number | null) {
     selection.set(cell);
     if (column()?.id === columnId) return;
+    run++;
+    progress.set(null);
+    profile.set(null);
     column.set(props.document.columns.find(item => item.id === columnId) ?? null);
-    profile.set(columnId == null ? null : props.document.session.profile(columnId));
+    if (wide() || info()) ensureProfile();
   }
-  const wide = () => windowSize().width >= 900;
+  function openInfo() { info.set(true); ensureProfile(); }
+  /** The selected value in full: the preview when it is whole, otherwise one readCell. */
+  function wholeValue(): string | null {
+    const cell = selection();
+    if (!cell) return null;
+    if (!cell.preview.truncated) return cell.preview.text ?? cell.preview.number ?? "";
+    const value = timed("Read whole value", () => props.document.session.readCell(cell.rowId, cell.columnId), () => bytes(cell.preview.byteLength));
+    return value.text ?? value.number ?? "";
+  }
+  function showValue() { info.set(false); full.set(wholeValue()); }
+  let copied: number | undefined;
+  cleanup(() => clearTimeout(copied));
+  async function copyValue() {
+    const text = full() ?? wholeValue();
+    if (text == null) return;
+    try { await Clipboard.writeText(text); copyLabel.set("Copied"); } catch { copyLabel.set("Copy failed"); }
+    clearTimeout(copied);
+    copied = setTimeout(() => copyLabel.set("Copy value"), 1500);
+  }
   const format = () => (props.document.metadata.delimiter === "\t" ? "TSV" : "CSV") + " · UTF-8";
   return <View class="flex-1 min-h-0 min-w-0 bg-background">
     <Toolbar accessibilityLabel="Document toolbar" class="min-h-14 shrink-0 flex-row items-center gap-3 border-b border-border/70 px-3 py-2 md:px-4">
@@ -56,7 +108,7 @@ function DocumentView(props: { document: OpenDocument; onClose: () => void; onIm
         </View>
         <If when={!wide()}>
           <View class="shrink-0 flex-row items-center gap-3 border-t border-border/70 bg-muted/30 px-4 py-3">
-            <BaseButton onPress={() => info.set(true)}
+            <BaseButton onPress={openInfo}
               class="cursor-pointer flex-1 min-h-11 flex-row items-center justify-center gap-2 rounded-full border border-border/70 bg-background px-4 shadow-sm active:bg-muted focus:ring-2 focus:ring-ring">
               <Icon name="info" class="h-4 w-4" />
               <Text class="text-sm font-medium text-foreground">Column info</Text>
@@ -69,7 +121,8 @@ function DocumentView(props: { document: OpenDocument; onClose: () => void; onIm
         <View class="w-72 shrink-0 min-h-0 bg-muted/40 p-3">
           <View testID="inspector-panel" class="flex-1 min-h-0 overflow-hidden rounded-2xl border border-border/60 bg-background shadow-sm">
             <Scroll testID="inspector-scroll" class="flex-1 min-h-0">
-              <Inspector column={column()} profile={profile()} metadata={props.document.metadata} selection={selection()} />
+              <Inspector column={column()} profile={profile()} metadata={props.document.metadata} selection={selection()} progress={progress()}
+                copyLabel={copyLabel()} onShowValue={showValue} onCopyValue={() => void copyValue()} />
             </Scroll>
           </View>
         </View>
@@ -77,10 +130,26 @@ function DocumentView(props: { document: OpenDocument; onClose: () => void; onIm
     </View>
     <If when={info() && windowSize().width < 900}>
       <Dialog title="Column information" onClose={() => info.set(false)}>
-        <Scroll style={{ maxHeight: windowSize().height * 0.6 }} class="min-h-0"><Inspector column={column()} profile={profile()} metadata={props.document.metadata} selection={selection()} /></Scroll>
+        <Scroll style={{ maxHeight: windowSize().height * 0.6 }} class="min-h-0"><Inspector column={column()} profile={profile()} metadata={props.document.metadata} selection={selection()} progress={progress()}
+          copyLabel={copyLabel()} onShowValue={showValue} onCopyValue={() => void copyValue()} /></Scroll>
         <Button label="Done" compact={platform.desktop} onPress={() => info.set(false)} />
       </Dialog>
     </If>
+    <If when={full() != null}>
+      <ValueDialog text={full() ?? ""} byteLength={selection()?.preview.byteLength ?? 0} copyLabel={copyLabel()}
+        title={`Row ${(selection()?.rowIndex ?? 0) + 1} · ${column()?.name || "(unnamed)"}`}
+        onCopy={() => void copyValue()} onClose={() => full.set(null)} />
+    </If>
+  </View>;
+}
+
+function DiagnosticsPanel() {
+  const memory = () => { measurements(); return wasmMemory(); };
+  return <View testID="diagnostics" class="absolute bottom-3 right-3 w-80 max-w-[92%] gap-1 rounded-xl border border-border bg-background p-3 shadow-lg">
+    <Text class="text-xs font-semibold text-foreground">Diagnostics · local only</Text>
+    <Text class="text-xs text-muted-foreground">{`WebAssembly memory ${bytes(memory())} (peak, never shrinks)`}</Text>
+    <Each of={measurements()}>{item => <Text class="text-xs text-foreground">{`${item().label}: ${item().ms.toFixed(1)} ms${item().detail ? ` · ${item().detail}` : ""}`}</Text>}</Each>
+    <Text class="text-xs text-muted-foreground">{`${keymap.label("ctrl+shift+d")} hides this panel and stops measuring.`}</Text>
   </View>;
 }
 
@@ -145,8 +214,12 @@ export function App() {
   cleanup(BrowserStyles.install('[data-testid="data-grid"] .nsh-noindicator > .nsh-bar { display: none; }'));
 
   const active = signal<OpenDocument | null>(null);
-  const mode = signal<"paste" | "review" | null>(null);
-  const draft = signal<LocalImport | null>(null);
+  const mode = signal<"paste" | "confirm" | "review" | null>(null);
+  // The reviewed bytes stay in Rust; this handle is disposed when review ends.
+  const draft = signal<ImportSource | null>(null);
+  // A large file waiting for confirmation before the browser reads it.
+  const pending = signal<LocalImport | null>(null);
+  const accepted = signal(false);
   const paste = signal("");
   const delimiter = signal(",");
   const headers = signal(true);
@@ -156,32 +229,56 @@ export function App() {
   const dragging = signal(false);
   let alive = true;
   let request = 0;
-  cleanup(() => { alive = false; request++; BrowserImport.cancelPending(); active()?.dispose(); });
+  cleanup(() => { alive = false; request++; BrowserImport.cancelPending(); draft()?.dispose(); active()?.dispose(); });
+  keymap.bind("ctrl+shift+d", () => { diagnosticsOn.set(!diagnosticsOn()); measurements.set([]); });
 
-  function resetImport() {
+  /** Clears review state; the Rust-held file is released here or by cancelPending. */
+  function clearDraft() {
     request++;
-    BrowserImport.cancelPending();
-    draft.set(null); analysis.set(null); busy.set(false); error.set("");
+    draft()?.dispose();
+    draft.set(null); pending.set(null); analysis.set(null); busy.set(false); error.set(""); accepted.set(false);
   }
+  function resetImport() { clearDraft(); BrowserImport.cancelPending(); }
   function dismiss() { resetImport(); mode.set(null); paste.set(""); }
-  function fail(value: unknown) { error.set(value instanceof Error ? value.message : String(value)); }
-  function review(file: LocalImport) {
-    // Only a manual paste may retain its own editable text after failed detection.
-    const pasted = mode() === "paste" && file.requestId == null;
-    resetImport();
-    mode.set(pasted ? "paste" : null);
+  function message(cause: unknown) { return cause instanceof Error ? cause.message : String(cause); }
+  function fail(value: unknown) { error.set(message(value)); }
+  function inspect(source: ImportSource, retry: "paste" | null) {
     try {
-      if (file.error) throw new Error(file.error);
-      const result = ImportDetector.inspect(file.bytes, file.name);
-      draft.set(file); analysis.set(result); delimiter.set(result.delimiter); headers.set(true); mode.set("review");
+      const result = timed("Inspect", () => source.inspect(), () => bytes(source.byteLength));
+      draft.set(source); analysis.set(result); delimiter.set(result.delimiter); headers.set(true); mode.set("review");
     } catch (cause) {
-      const message = cause instanceof Error ? cause.message : String(cause);
-      error.set(file.name ? `${file.name}: ${message}` : message);
+      const name = source.name;
+      source.dispose();
+      mode.set(retry);
+      error.set(`${name}: ${message(cause)}`);
     }
   }
+  function reviewPaste() {
+    const source = ImportSource.fromText(paste(), "Pasted data");
+    clearDraft();
+    inspect(source, "paste");
+  }
+  function receive(file: LocalImport) {
+    const confirmed = accepted();
+    // Take the read file before clearing, or wait for confirmation without reading.
+    let source: ImportSource | null = null, failure = file.error ?? "";
+    if (!failure && !file.deferred) { try { source = BrowserImport.take(file.requestId!); } catch (cause) { failure = message(cause); } }
+    clearDraft();
+    if (file.deferred) { pending.set(file); mode.set("confirm"); return; }
+    if (!source) { mode.set(null); error.set(file.name ? `${file.name}: ${failure}` : failure); return; }
+    record("File read", file.readMs, bytes(file.size));
+    accepted.set(confirmed);
+    inspect(source, null);
+  }
   cleanup(BrowserImport.onFile(file => {
-    if (alive && file.requestId != null && BrowserImport.isCurrent(file.requestId)) review(file);
+    if (alive && file.requestId != null && BrowserImport.isCurrent(file.requestId)) receive(file);
   }, active => { if (alive) dragging.set(active); }));
+  function readLarge() {
+    const file = pending();
+    if (mode() !== "confirm" || !file || busy()) return;
+    busy.set(true); error.set(""); accepted.set(true);
+    try { BrowserImport.readDeferred(file.requestId!); } catch (cause) { busy.set(false); fail(cause); }
+  }
 
   function pick() {
     dismiss();
@@ -197,9 +294,8 @@ export function App() {
     } catch { /* The paste field remains available without clipboard permission. */ }
   }
   async function importDocument() {
-    const file = draft();
-    if (mode() !== "review" || !file || busy()) return;
-    BrowserImport.cancelPending();
+    const source = draft();
+    if (mode() !== "review" || !source || busy()) return;
     const id = ++request;
     const options = { delimiter: delimiter(), headers: headers() };
     busy.set(true); error.set("");
@@ -208,15 +304,17 @@ export function App() {
     if (!alive || id !== request) return;
     let candidate: DocumentSession | null = null;
     try {
-      candidate = new DocumentSession(file.bytes, options);
+      candidate = timed("Parse", () => DocumentSession.fromSource(source, options), () => bytes(source.byteLength));
       const session = candidate;
       const metadata = session.metadata();
       const columns = session.columns();
       let live = true;
-      const document: OpenDocument = { session, metadata, columns, name: file.name,
+      const document: OpenDocument = { session, metadata, columns, name: source.name,
         dispose: () => { if (live) { live = false; session.dispose(); } } };
       active.set(document);
-      draft.set(null); analysis.set(null); paste.set(""); mode.set(null);
+      timeFrame("First document frame", `${metadata.columnCount} columns`);
+      // The session holds its own data; release the source bytes now.
+      source.dispose(); draft.set(null); analysis.set(null); paste.set(""); mode.set(null);
     } catch (cause) { candidate?.dispose(); fail(cause); }
     finally { busy.set(false); }
   }
@@ -237,15 +335,37 @@ export function App() {
     <If when={!active()}>
       <Home dragging={dragging()} onPick={pick} onPaste={() => { if (!mode()) void openPaste(); }} />
     </If>
-    <If when={error() && !mode()}><View role="alert" class="border-t border-border bg-background p-4"><Text class="text-sm text-destructive">{error()}</Text></View></If>
+    <If when={error() && !mode()}>
+      <View role="alert" testID="import-error"
+        style={windowSize().width < 640 ? { position: "absolute", left: 12, right: 12, bottom: 12 }
+          : { position: "absolute", left: "50%", bottom: 24, translate: "-50% 0" }}
+        class={(windowSize().width < 640 ? "" : "w-[480px] max-w-[92%] ") + "flex-row items-start gap-3 rounded-2xl border border-border/70 bg-background p-4 shadow-lg"}>
+        <Icon name="warning" class="mt-0.5 h-5 w-5" />
+        <View class="flex-1 gap-1 pt-0.5">
+          <Text class="text-sm font-semibold text-foreground">Import failed</Text>
+          <Text class="text-[13px] text-muted-foreground">{error()}</Text>
+        </View>
+        <Button label="Dismiss" icon="x" quiet compact onPress={() => error.set("")} />
+      </View>
+    </If>
     {/* Keyed by step so review opens at the top instead of keeping the paste step's scroll offset. */}
     <Each of={mode() ? [mode()!] : []} key={step => step}>{() =>
-      <Dialog title={mode() === "paste" ? "Paste your data" : `Import “${draft()?.name ?? ""}”`}
+      <Dialog title={mode() === "paste" ? "Paste your data" : `Import “${(mode() === "confirm" ? pending()?.name : draft()?.name) ?? ""}”`}
         description={mode() === "paste" ? "Paste CSV or TSV text below. You can review the format before opening it."
+          : mode() === "confirm" ? `This file is ${bytes(pending()?.size ?? 0)}. Rowtation has not read it yet.`
           : analysis()?.ambiguous ? "Confirm the separator below; detection is uncertain." : "Format detected. Review the options before importing."}
         onClose={dismiss}>
         <If when={mode() === "paste"}>
           <Input label="CSV or TSV text" testID="paste-input" value={paste()} onChange={value => paste.set(value)} multiline placeholder={"name,city\nMia,Brisbane"} />
+        </If>
+        <If when={mode() === "confirm"}>
+          <View role="alert" class="flex-row gap-3 rounded-xl border border-border bg-muted/60 p-4">
+            <Icon name="warning" class="h-5 w-5" />
+            <View class="flex-1 gap-1">
+              <Text class="text-sm font-semibold text-foreground">This is a large file</Text>
+              <Text class="text-[13px] text-foreground">Reading and importing it may take a long time, make this tab unresponsive, or run out of browser memory. Read it only if you want to continue.</Text>
+            </View>
+          </View>
         </If>
         <If when={mode() === "review"}>
           <ChoiceGroup>
@@ -259,7 +379,7 @@ export function App() {
             <Text testID="import-summary" class="text-[13px] text-foreground">{summary()}</Text>
             <Text class="text-xs text-muted-foreground">Values are preserved as text, including leading zeros and formula-like content.</Text>
           </View>
-          <If when={size()?.large}>
+          <If when={size()?.large && !accepted()}>
             <View role="alert" class="flex-row gap-3 rounded-xl border border-border bg-muted/60 p-4">
               <Icon name="warning" class="h-5 w-5" />
               <View class="flex-1 gap-1">
@@ -275,12 +395,19 @@ export function App() {
           <If when={mode() === "paste" || (error() && !busy())}><Button label="Choose another file…" quiet compact={compact} onPress={pick} /></If>
           <View class="flex-1" />
           <Button label="Cancel" quiet compact={compact} onPress={dismiss} />
-          <If when={mode() === "paste"} else={<Button label={busy() ? "Importing…" : size()?.large ? "Import anyway" : "Import document"} compact={compact} disabled={busy() || !draft()} onPress={importDocument} />}>
-            <Button label="Review import" compact={compact} disabled={!paste()} onPress={() => review({ name: "Pasted data", bytes: new TextEncoder().encode(paste()) })} />
+          <If when={mode() === "paste"}>
+            <Button label="Review import" compact={compact} disabled={!paste()} onPress={reviewPaste} />
+          </If>
+          <If when={mode() === "confirm"}>
+            <Button label={busy() ? "Reading…" : "Read file"} compact={compact} disabled={busy() || !pending()} onPress={readLarge} />
+          </If>
+          <If when={mode() === "review"}>
+            <Button label={busy() ? "Importing…" : size()?.large && !accepted() ? "Import anyway" : "Import document"} compact={compact} disabled={busy() || !draft()} onPress={importDocument} />
           </If>
         </View>
       </Dialog>}
     </Each>
+    <If when={diagnosticsOn()}><DiagnosticsPanel /></If>
   </View>;
 }
 

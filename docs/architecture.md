@@ -78,9 +78,12 @@ long work blocks the browser thread. There is no worker or async-work claim.
 
 ```tsx
 import { cleanup } from "nsh";
-import { DocumentSession } from "rowtation/native";
+import { DocumentSession, ImportSource } from "rowtation/native";
 
-const session = new DocumentSession(bytes, { delimiter: "\t", headers: true });
+const source = ImportSource.fromText(text, "Pasted data"); // or BrowserImport.take(requestId)
+const analysis = source.inspect();
+const session = DocumentSession.fromSource(source, { delimiter: analysis.delimiter, headers: true });
+source.dispose(); // the session keeps its own data
 cleanup(() => session.dispose()); // inside the owning component
 const metadata = session.metadata();
 const columns = session.columns();
@@ -95,16 +98,23 @@ const output = session.serialize({ delimiter: ",", headers: true });
 | API | Contract |
 | --- | --- |
 | `new DocumentSession(input: Uint8Array, options: ImportOptions)` | Atomic import; options `{ delimiter?: string, headers?: boolean }`, defaults comma/true. Failed creation does not affect another session. |
+| `DocumentSession.fromSource(source: ImportSource, options)` | Same import from Rust-held bytes, without copying them through JS. The source is kept, so a failed import can be retried. |
+| `ImportSource.fromText(text, name)`, `source.inspect()`, `source.name`, `source.byteLength` | Bytes of one import candidate held in Rust. `inspect` equals `ImportDetector.inspect`. Dispose when review ends. |
+| `BrowserImport.take(requestId)` / `readDeferred(requestId)` | Take the `ImportSource` a delivered `LocalImport` read, once; or read a file delivered with `deferred: true` (above 8 MiB, unread) after confirmation. `cancelPending()` drops both and stops a read at its next 16 MiB slice. |
+| `profileStep(columnId, rows): ProfileProgress` | Count up to `rows` more rows of a column's exact statistics; `profile` is set when done. `profile(columnId)` runs to completion. |
+| `measureRows(window): number` | Diagnostics only: milliseconds Rust spends building a window, to separate bridge cost. |
 | `metadata(): DocumentMetadata` | `{ id, rowCount, columnCount, revision, dirty, delimiter, headers }`; no row copies. |
 | `columns(): ColumnMetadata[]` | Ordered `{ id, name, originalName }`; originalName is null for generated columns. |
-| `rows({ offset, limit }): RowsSnapshot` | `{ documentId, revision, offset, rows: [{ id, cells }] }`; cells follow schema order, including missing trailing values. Every column and whole text/number values are copied, with their UTF-8 `byteLength`. At most 256 rows; offset is a position, not an ID. |
-| `readCell(rowId: number, columnId: number): CellSnapshot` | Full value using document-scoped IDs obtained from `rows()`/`columns()`. `{ kind, text, boolean, number, byteLength }`. Only the payload for kind is populated, others null. `kind` is `missing`, `null`, `text`, `boolean` or `number`. |
+| `rows({ offset, limit, columnOffset?, columnLimit?, previewBytes? }): RowsSnapshot` | `{ documentId, revision, offset, columnOffset, rows: [{ id, cells }] }`; cells follow schema order from columnOffset, including missing trailing values. Without previewBytes whole text/number values are copied; with it each value is cut to that many UTF-8 bytes on a character boundary and marked `truncated`. `byteLength` is always the whole length. At most 256 rows; offsets are positions, not IDs. |
+| `readCell(rowId: number, columnId: number): CellSnapshot` | Full value using document-scoped IDs obtained from `rows()`/`columns()`. `{ kind, text, boolean, number, byteLength, truncated }` (never truncated). Only the payload for kind is populated, others null. `kind` is `missing`, `null`, `text`, `boolean` or `number`. |
 | `serialize(options: ExportOptions): Uint8Array` | Optional delimiter/headers default to source settings. Whole document only; no filtered export or download. |
 | `dispose(): void` | NSH frees the Rust value immediately. Calls after disposal throw TypeError. Garbage collection is a fallback; explicitly dispose when closing/replacing a document. |
 
 The inspection viewport keeps only its requested windows, key rows by stable
-identity, and read changing signals inside JSX/closures. Window cells carry whole
-values; `byteLength` reports the UTF-8 text/number length (zero for other kinds).
+identity, and read changing signals inside JSX/closures. The grid requests only
+the rows and columns in view, with 512-byte previews; the inspector copies or shows
+the whole value through `readCell`. Profile common values are 256-byte previews
+with exact counts and whole byte lengths.
 Import UI must keep the old session until a new constructor succeeds, then dispose
 the old one. PR #3 operations should accept stable IDs and revision expectations
 rather than JS-owned row arrays. These are ownership contracts, not implemented editing methods.
@@ -157,8 +167,9 @@ field and a `large` flag. The flag is set above 8 MiB of input, 100,000 records,
 512 columns, 1,000,000 fields or a 1 MiB field (`inspection::LARGE_*`). The review
 dialog then shows a warning and renames its action to "Import anyway"; nothing is
 rejected.
-NSH copies input bytes once into Rust and copies returned snapshots/bytes across
-the bridge. The engine retains decoded fields, not the original file or a dataset
+A picked file is read in 16 MiB slices directly into one Rust buffer, and pasted
+text is encoded once in Rust; `ImportSource` keeps those bytes until import, so JS
+never holds a second copy. Returned snapshots/bytes are copied across the bridge. The engine retains decoded fields, not the original file or a dataset
 clone. Only requested windows are copied; no whole-dataset JS cache or worker architecture is added.
 Dispose drops the document and all retained rows/strings. WASM's allocator may keep
 freed linear-memory pages for reuse; disposal does not promise the browser shrinks
@@ -168,10 +179,13 @@ its heap. Multiple sessions can coexist.
 
 Rust tests cover parsing, invalid syntax/encoding, headers, empty/missing values,
 leading zeros, Unicode, round trips, identity, windows and lifecycle, imports past
-every former cap (including a value over 32 MiB that round-trips), whole values in
-wide windows, and the large-input measurements and flags. The NSH smoke tests cover typed results/arguments,
+former caps (1 MiB values, 513 columns, 100,001 rows), previews on character
+boundaries, column ranges, sliced profiles, import sources, and the large-input
+measurements and flags. Inputs of tens of megabytes (a 32 MiB value, over a
+million fields, 20,000-column windows) and the benchmark live in the ignored
+`tests/stress.rs`. The NSH smoke tests cover typed results/arguments,
 failed constructors, serialization, and explicit disposal, with a test-only app
-entry to exercise the actual browser/WASM bridge, including a 12 MiB cell returned whole by a row window
+entry to exercise the actual browser/WASM bridge, including a value over 1 MiB returned whole, as a preview
 and by its stable-ID read. Production UI tests open `App.tsx` and cover paste import, replacement after failure,
 responsive inspection, keyboard selection and offscreen row-window recycling.
 
@@ -192,7 +206,7 @@ test host. No document history is retained. A document view is keyed by document
 ID, and its owner disposes the Rust session when closed/replaced. Cleanup is
 idempotent so root disposal and view disposal cannot free it twice.
 
-`ImportDetector.inspect(bytes, filename)` scans up to 32 logical records, counting
+`ImportSource.inspect()` (or `ImportDetector.inspect(bytes, filename)`) scans up to 32 logical records, counting
 commas/tabs outside quoted text. The filename breaks ties only. Mixed separators
 or no separators are marked ambiguous. It validates UTF-8 and measures the whole
 input for the large-import warning; the existing strict parser validates the complete file on import. The review step

@@ -50,11 +50,21 @@ this internal serializer emits literal text unchanged.
 
 There are no size caps on input, rows, columns, stored fields, value length or
 serialized output; the practical ceiling is the browser tab's memory and WASM's
-4 GiB address space. Row windows return at most 256 rows, with every column and
-whole values. Before importing, the review step measures the whole input in Rust
-and asks for confirmation ("Import anyway") above 8 MiB, 100,000 records, 512
-columns, 1,000,000 fields or a 1 MiB field. These thresholds are advisory, not
-measured performance limits. Parsing remains synchronous on the browser thread.
+4 GiB address space. A picked or dropped file above 8 MiB is held unread until
+the user confirms; it is then read in 16 MiB slices into one Rust buffer that JS
+never mirrors. The review step measures the whole input in Rust and asks for
+confirmation ("Import anyway") above 8 MiB, 100,000 records, 512 columns,
+1,000,000 fields or a 1 MiB field. These thresholds are advisory, not measured
+performance limits. Row windows return at most 256 rows and can be narrowed to a
+column range and to 512-byte previews; the grid fetches only what is in view and
+the inspector reads whole values on demand. Column statistics are exact and are
+counted in slices between frames. Parsing remains synchronous on the browser thread.
+
+Press Ctrl+Shift+D to show local diagnostics: read, inspect, parse, row-window
+(Rust versus bridge), grid-update and profiling times plus WebAssembly memory, in
+the panel and console only. Nothing is recorded while it is off or sent anywhere.
+`cargo test --release --test stress -- --ignored --nocapture` runs the large-input
+stress tests and a native benchmark (`ROWTATION_BENCH_MB`, default 64).
 
 See [architecture and API contracts](docs/architecture.md) for Rust/TSX usage,
 identity, error and disposal rules.

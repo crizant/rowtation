@@ -126,3 +126,44 @@ test("small data imports without a warning", async () => {
   expect(app.texts()).not.toContain("This is a large dataset");
   expect(app.texts()).toContain("Import document");
 });
+
+test("long values show previews in the grid and whole values on request", async () => {
+  const long = "雪".repeat(40_000) + "END";
+  const app = await open("./App.tsx", { width: 1280, height: 800, clipboard: `id,note\n007,${long}` });
+  await app.press("Paste from clipboard");
+  await app.press("Review import");
+  await app.press("Import document");
+  await app.waitFor("1 row · 2 columns");
+  expect(app.texts()).toContain("雪".repeat(170) + "…");
+  expect(app.texts().join("\n")).not.toContain("END");
+  await app.press("007");
+  await app.keyboard.press("arrowright");
+  await app.waitFor("117 KB · preview");
+  await app.press("copy-value");
+  await app.wait(100);
+  expect(app.clipboard()).toBe(long);
+  await app.press("View full value");
+  await app.waitFor("Showing 32,768 of 40,003 characters. Copy value copies all of it.");
+  await app.press("Show more");
+  await app.waitFor(long);
+  await app.press("copy-full-value");
+  await app.waitFor("Copied");
+  expect(app.clipboard()).toBe(long);
+});
+
+test("diagnostics are off until requested and stay in the tab", async () => {
+  const app = await open("./App.tsx", { width: 1280, height: 800, clipboard: "id\n1\n2" });
+  expect(app.texts()).not.toContain("Diagnostics · local only");
+  await app.keyboard.press("ctrl+shift+d");
+  await app.waitFor("Diagnostics · local only");
+  await app.press("Paste from clipboard");
+  await app.press("Review import");
+  await app.press("Import document");
+  await app.waitFor("2 rows · 1 column");
+  const log = app.texts().join("\n");
+  expect(log).toContain("Inspect: ");
+  expect(log).toContain("Parse: ");
+  expect(log).toContain("Row window: ");
+  await app.keyboard.press("ctrl+shift+d");
+  expect(app.texts()).not.toContain("Diagnostics · local only");
+});

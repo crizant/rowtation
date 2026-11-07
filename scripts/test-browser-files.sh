@@ -93,4 +93,24 @@ await app.press("Review import");
 await app.press("Import document");
 await app.waitFor("Paste replacement");
 
+// Large files are confirmed before the browser reads them, and a read can be cancelled.
+await app.keyboard.press("F6");
+await app.waitFor("This file is 8.6 MB. Rowtation has not read it yet.");
+if (!app.texts().includes("Read file")) throw new Error("Large file was not held for confirmation");
+await app.press("Cancel");
+if (app.shows("app-dialog") || !app.texts().includes("Paste replacement")) throw new Error("Declined large file changed the document");
+await app.keyboard.press("F6");
+await app.press("Read file");
+await app.waitFor("Reading…");
+await app.press("Cancel");
+await releaseRead();
+if (app.shows("app-dialog") || !app.texts().includes("Paste replacement")) throw new Error("Cancelled large read reopened the dialog or changed the document");
+await app.keyboard.press("F6");
+await app.press("Read file");
+await releaseRead();
+await app.waitFor("8.6 MB · 4,500,000 rows · 1 column · longest field 2 bytes");
+if (app.texts().includes("This is a large dataset")) throw new Error("Confirmed file was warned about twice");
+await app.press("Import document");
+await app.waitFor("4,500,000 rows · 1 column", { timeout: 30000 });
+
 STEPS
