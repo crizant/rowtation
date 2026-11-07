@@ -3,8 +3,10 @@
 ## Purpose and current status
 
 Rowtation converts structured data in the browser. The workflow is import →
-inspect → transform → export. These are intended requirements; only the mixed
-scaffold and bridge demo currently exist.
+inspect → transform → export. The Rust document core and CSV/TSV
+parser/serializer are implemented. The import, table, transformation and download
+workflows below remain planned. See the
+architecture for the implemented value, header, delimiter and resource policies.
 
 ## Import
 
