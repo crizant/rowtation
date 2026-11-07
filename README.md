@@ -11,18 +11,26 @@ Users will paste, drop or open CSV, TSV, JSON, NDJSON, XML and Excel files;
 inspect them as a table; sort, search, edit cells and find and replace values;
 then export and download the result.
 
-**Status:** the Rust document core and CSV/TSV parsing/serialization are implemented,
-with a retained NSH session API and bounded row retrieval. The screen remains a
-placeholder. Import controls, the table, editing, other formats and browser
-downloads are planned. All data processing stays local; no backend, cloud storage
-or telemetry is added.
+**Status:** CSV/TSV import and inspection are implemented: choose a local file,
+drop one into the browser, or paste text; review the separator and header option;
+then inspect a virtualized grid with keyboard/touch cell selection and column
+statistics. Desktop uses a right inspector; narrow browsers use a contextual
+panel. Search, sorting, editing, other formats and export/download UI remain planned.
+
+Data stays local. There is no backend, upload, telemetry, persistent storage or
+session history. Closing a document releases its Rust session. Import failures
+preserve the active document; a successful replacement releases the old session.
+
+See [UI validation instructions](docs/ui-validation.md) for local desktop/mobile
+screenshot generation, visual inspection guidance, and browser validation commands.
 
 ## Document engine
 
 CSV/TSV input is UTF-8, with an optional initial BOM. Quoted fields, doubled quotes,
 embedded newlines, CRLF/LF (and bare CR), Unicode, empty fields and blank records
-are supported. Options explicitly select the delimiter and header mode; no format
-or header detection runs. Every field stays text: `00123`, `true`, `null` and
+are supported. Options explicitly select the delimiter and header mode; the low-level parser does no format
+or header detection. The import UI suggests comma/tab using a quote-aware Rust
+sample and lets the user correct it. Header mode is explicit, defaulting to on. Every field stays text: `00123`, `true`, `null` and
 formula-like values retain their literal values. Nothing is evaluated.
 
 Headers retain order, duplicate names and empty names. No-header input generates
@@ -63,7 +71,9 @@ Prerequisites:
 - LLVM `clang` and `llvm-ar`, available on `PATH` for the mixed web build.
 - Chrome, Edge or Chromium for browser tests. Select another compatible browser
   with `--browser /path/to/executable`.
-- The `wasm-bindgen` CLI version requested by NSH if it reports that it is missing.
+- `wasm-bindgen` CLI **0.2.130**, matching the locked WASM bindings. The browser
+  file adapter calls browser APIs through these bindings:
+  `cargo install wasm-bindgen-cli --version 0.2.130 --locked`.
 
 No npm dependencies are currently needed. See the
 [NSH documentation](https://nsh.dev) for CLI setup.
@@ -128,18 +138,21 @@ python3 -m http.server 8080 --directory dist/Rowtation
 
 Open http://localhost:8080. Deploy that directory to a static host; a backend
 service is not required by the planned architecture. Packaging does not publish
-the website. Test imports and downloads against the deployed origin before release.
+the website. Test imports against the deployed origin before release. Downloads are not implemented.
 
 ## Project layout
 
 ```text
-App.tsx                TSX entry and placeholder screen
+App.tsx                Responsive import and inspection screens, TSX entry
 App.test.tsx           NSH bridge and app-runtime smoke tests
-components/            Shared styled NSH controls
+components/            Styled controls, bounded DataGrid and Inspector
 src/lib.rs             Rust API registered as rowtation/native
 src/document/          Canonical values, identities and bounded storage access
 src/formats/           CSV/TSV parser, validation and serializer
-src/session.rs         Retained NSH document session and transport records
+src/session.rs         Retained NSH session, bounded windows and profile cache
+src/inspection.rs      Rust delimiter suggestions and profile transport records
+src/browser_import.rs Browser file input/drop adapter through registered NSH API
+src/browser_styles.rs Scoped browser presentation styles through registered API
 src/error.rs           Recoverable engine errors
 tests/                 Synthetic Rust tests and test-only TSX bridge entry
 Cargo.toml             Rust crate and NSH dependencies

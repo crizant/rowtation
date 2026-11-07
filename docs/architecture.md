@@ -9,8 +9,8 @@ No backend, cloud storage, persistent document storage or telemetry is introduce
 Rust owns the document, all format parsing/serialization and resource validation.
 TSX owns presentation and transient focus, selection, dialogs and future drafts.
 Returned snapshots may be mirrored in UI signals; they are not a second dataset.
-The current screen is a placeholder. File input, table, sorting/searching, editing,
-replacement, other format adapters and browser downloads are not implemented.
+The import UI and virtualized inspection table are implemented. Sorting/searching,
+editing, replacement, other format adapters and browser downloads remain planned.
 
 `#[native_module("rowtation/native")]` registers `DocumentSession` using
 `Registry::class`. `#[class]`, `#[derive(JsObject)]`, `#[derive(PropEnum)]` and
@@ -103,7 +103,7 @@ const output = session.serialize({ delimiter: ",", headers: true });
 | `serialize(options: ExportOptions): Uint8Array` | Optional delimiter/headers default to source settings. Whole document only; no filtered export or download. |
 | `dispose(): void` | NSH frees the Rust value immediately. Calls after disposal throw TypeError. Garbage collection is a fallback; explicitly dispose when closing/replacing a document. |
 
-A viewport in PR #2 should keep only its requested windows, key rows by stable
+The inspection viewport keeps only its requested windows, key rows by stable
 identity, and read changing signals inside JSX/closures. Render cell payloads as
 previews: when `truncated` is true, the payload is a prefix, never a replacement
 value or an editable draft. Use the row/column IDs to call `readCell()` when the
@@ -116,7 +116,8 @@ rather than JS-owned row arrays. These are ownership contracts, not implemented 
 
 ## CSV/TSV and serialization policies
 
-UTF-8 only, optional single initial BOM; no encoding or format detection. Accept
+Low-level parser: UTF-8 only, optional single initial BOM; explicit delimiter and
+headers, without encoding or format detection. Accept
 single ASCII delimiters except NUL, quote, CR and LF. A tab selects TSV. Header
 mode is explicit. Preserve whitespace, text, Unicode, doubled quotes, embedded
 newlines and delimiters. Accept LF, CRLF and bare CR record separators. Reject
@@ -172,7 +173,7 @@ shortened payload explicitly; storage, `readCell()` and serialization retain the
 full values. `readCell()` can transfer a whole large cell on explicit request.
 NSH copies input bytes once into Rust and copies returned snapshots/bytes across
 the bridge. The engine retains decoded fields, not the original file or a dataset
-clone. Only requested windows are copied; no cache or worker architecture is added.
+clone. Only requested windows are copied; no whole-dataset JS cache or worker architecture is added.
 Dispose drops the document and all retained rows/strings. WASM's allocator may keep
 freed linear-memory pages for reuse; disposal does not promise the browser shrinks
 its heap. Multiple sessions can coexist; per-session caps are not a global quota.
@@ -185,13 +186,73 @@ limits, including large-cell discoverability, UTF-8 preview boundaries and the
 aggregate preview byte budget. The NSH smoke tests cover typed results/arguments,
 failed constructors, serialization, and explicit disposal, with a test-only app
 entry to exercise the actual browser/WASM bridge, including a 2 MiB cell preview followed by its full
-stable-ID read. A separate production smoke test opens `App.tsx` and checks the
-Rowtation title. The production screen stays a placeholder.
+stable-ID read. Production UI tests open `App.tsx` and cover paste import, replacement after failure,
+responsive inspection, keyboard selection and offscreen row-window recycling.
 
 Verify `cargo fmt --check`, `nsh check`, `nsh build`, `nsh test`,
 `nsh test --target web` and `nsh package --target web -o dist` for changes. A web
 package verifies the in-memory csv dependency path compiles to wasm32; browser
 smoke tests verify runtime compatibility. Resource caps have synthetic tests but
 are not large-file responsiveness benchmarks. Measure representative browsers
-before raising them or adding workers. UI import, virtualized table, editing,
-structured-format mapping, safe download policy and undo/redo remain later work.
+before raising them or adding workers. Editing, structured-format mapping, safe download policy and undo/redo remain
+later work. Browser file and layout regressions run through the synthetic host
+used by scripts/test-browser-files.sh.
+
+## Import and inspection UI
+
+`App.tsx` mounts the responsive screen. TSX owns the current document handle, import draft,
+dialog visibility, loading/errors and selection. The production entry imports no
+test host. No document history is retained. A document view is keyed by document
+ID, and its owner disposes the Rust session when closed/replaced. Cleanup is
+idempotent so root disposal and view disposal cannot free it twice.
+
+`ImportDetector.inspect(bytes, filename)` scans up to 32 logical records, counting
+commas/tabs outside quoted text. The filename breaks ties only. Mixed separators
+or no separators are marked ambiguous. It validates UTF-8 and the 8 MiB input cap;
+the existing strict parser validates the complete file on import. The review step
+always exposes comma/tab and the header toggle. No scalar or header inference is
+added. A failed constructor leaves the old session untouched.
+
+`BrowserImport.onFile(callback, onDrag)` owns a hidden local file input and document
+drag/drop listeners. Its returned stop removes the input, handlers and closures;
+in-flight reads check lifetime/generation before delivery. `cancelPending()`
+invalidates that same generation on UI cancellation or workflow changes. Each
+file result carries an opaque `requestId`; TSX checks `isCurrent(requestId)` again
+when a queued callback arrives. Rejected files clear obsolete review drafts and
+report the failing filename; parser errors keep only the named current draft so
+its separator/header options can be corrected. `pick()` clicks that
+input synchronously in the user's press. Bytes are read through browser File APIs
+in Rust/WASM, with the size cap checked before allocating a read buffer. Only one
+.csv/.tsv file is accepted. These APIs use registered NSH modules and generated
+interfaces. Target-specific web-sys/wasm-bindgen dependencies add no native target.
+
+`components/DataGrid.tsx` styles NSH's DataTable. It supplies `rowCount`, `dataStart`
+and only the visible row range plus four rows on each side. Wide windows are split
+into requests respecting 256 rows, 16,384 logical cells and the engine preview-byte
+budget. The table virtualizes both rows and columns; sticky headers, two-axis
+scrolling, hit testing, focus and keyboard navigation belong to NSH. TSX translates
+only the current cell previews to display text. Selection retains document, row
+and column IDs independently of rendered cells. Keyboard jumps can read a single
+row before the visible-range event arrives. Preview truncation is indicated with
+an ellipsis and original byte count in the inspector; the grid is read-only.
+
+`DocumentSession.profile(columnId)` computes exact distinct/empty/missing counts
+and the top five nonempty values in Rust. Empty text is a distinct present value;
+missing fields are excluded from distinct counts. Frequency maps borrow the
+stored strings and are dropped after computation. The session caches at most
+eight small summaries and recomputes an evicted column on demand. Selection within
+a column does not rescan it. Common-value previews are bounded to 256 UTF-8 bytes,
+and ties use lexical text order. Current imported values remain Text.
+
+The desktop inspector uses a stationary rounded frame around an independent
+scroll view. Dialogs have explicit centered desktop positioning and bottom panel
+positioning below 640 points, with a scrollable content region and safe-area
+padding. The inspector moves to a contextual panel below 900 points.
+
+NSH 0.4's web desktop backend draws a horizontal indicator even when the inner
+DataTable scroller disables it, alongside DataTable's bottom viewport scrollbar.
+`BrowserStyles.install(css)` installs/removes a scoped app stylesheet suppressing
+only the disabled inner indicator beneath `data-grid`. TSX owns that CSS; Rust
+only attaches it. This compatibility rule is tied to the resolved 0.4 DOM classes
+and should be checked visually when upgrading NSH. It does not modify the NSH runtime or disable
+scrolling. File contents never enter CSS, markup or executable code.

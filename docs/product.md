@@ -4,11 +4,23 @@
 
 Rowtation converts structured data in the browser. The workflow is import →
 inspect → transform → export. The Rust document core and CSV/TSV
-parser/serializer are implemented. The import, table, transformation and download
-workflows below remain planned. See the
+parser/serializer and CSV/TSV import/inspection are implemented. Transformation,
+other formats and download workflows below remain planned. See the
 architecture for the implemented value, header, delimiter and resource policies.
 
-## Import
+## Implemented import and inspection
+
+- Local .csv/.tsv files by picker/drop, or pasted UTF-8 CSV/TSV text.
+- Rust delimiter suggestion, explicit header/separator review, actionable parsing
+  errors, loading and empty states, atomic document replacement.
+- Virtualized two-axis table with row numbers, sticky headers, cell selection and
+  keyboard navigation. Values remain literal text, with bounded previews.
+- Desktop column inspector and narrow-browser contextual panel: exact unique,
+  empty and missing counts, five common values, source settings and selection.
+- In-memory active document only. No history or persistence; closing/replacing it
+  disposes its retained Rust session. No upload or backend.
+
+## Planned import extensions
 
 - Accept pasted text, dropped files and an explicit Open action.
 - Support CSV, TSV, JSON, NDJSON, XML and Excel. Proposed Excel input scope is
@@ -18,7 +30,7 @@ architecture for the implemented value, header, delimiter and resource policies.
 - Report malformed input with actionable location details when available.
 - Offer worksheet selection for workbooks with multiple sheets.
 
-## Table workflow
+## Planned table transformations
 
 - Show headers, row counts and typed cell values in a virtualized table.
 - Sort columns with a visible direction and deterministic ordering.
@@ -28,7 +40,7 @@ architecture for the implemented value, header, delimiter and resource policies.
   actions. Preview affected counts before a bulk replacement.
 - Show unsaved edits and preserve the document after a failed operation.
 
-## Export
+## Planned export
 
 - Choose output format, filename and options; download the serialized bytes.
 - Target CSV, TSV, JSON, NDJSON, XML and Excel output. Excel output starts with
