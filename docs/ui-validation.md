@@ -27,12 +27,12 @@ it is no longer needed.
 
 `nsh test` runs the Rust fixtures and production UI workflows. These cover UTF-8
 CSV/TSV parsing, explicit headers, failed import preservation, successful
-replacement, disposal, exact profile counts, bounded previews, cached summaries,
+replacement, disposal, exact profile counts, previews with whole-value view and copy, diagnostics, cached summaries,
 virtualized scrolling, keyboard selection and responsive layouts. The wide-table
-case uses 512 columns and a 2160-point viewport so row-window requests must split
-to stay under the Rust cell limit. That same case narrows the viewport and
-navigates to an offscreen column. One mobile workflow covers TSV/no-header import and the contextual inspector. There
-are six UI/bridge workflows in total; parser and statistics cases stay in Rust.
+case uses 512 columns and a 2160-point viewport, then narrows the viewport and
+navigates to an offscreen column. Two workflows cover the large-import warning:
+100,001 records require "Import anyway", and small input shows no warning. One mobile workflow covers TSV/no-header import and the contextual inspector. There
+are eight UI/bridge workflows in total; parser and statistics cases stay in Rust.
 Appearance is verified through screenshots rather than a separate DOM geometry
 test harness.
 
@@ -52,18 +52,18 @@ are shared with the development server and package builder.
 
 ## Verification result
 
-Verified on 2026-11-07 with NSH 0.4.0 and installed Chromium:
+Verified on 2026-11-08 with NSH 0.4.0 and Chrome for Testing:
 
 - `cargo fmt --check`, `nsh check`, and `nsh build`: passed.
-- `nsh test`: 29 passed (23 Rust tests and six UI/bridge workflows).
-- `nsh test --target web --browser <Chromium>`: six workflows passed.
+- `nsh test`: 32 passed (24 Rust tests and eight UI/bridge workflows).
+- `nsh test --target web --browser <Chromium>`: eight workflows passed.
 - `scripts/test-browser-files.sh`: local picker/drop workflow passed.
 - Native and wasm32 `cargo clippy` with warnings denied: passed.
 - `nsh package --target web -o dist`: passed.
-- Visually inspected light desktop (1440×960), short desktop (1280×480), mobile
-  (390×844), and dark desktop captures. Desktop dialogs are centered, the inspector
-  frame stays fixed during scrolling, and its content remains clipped to the panel.
-
+- Visually inspected desktop and mobile home, import review, the large-dataset
+  warning, document, inspector and dark desktop captures. The test browser does
+  not report a desktop pointer, so the 34-point desktop grid density and compact
+  controls are not shown in these captures.
 
 ## Limits
 
@@ -72,10 +72,13 @@ header inference, history, persistence, search, sorting, editing, undo or export
 UI. The existing internal serializer remains available to Rust callers.
 
 Parsing and first-time column profiling are synchronous on the browser thread.
-Existing resource caps remain in force: 8 MiB input, 100,000 rows, 512 columns and
-1,000,000 stored fields. These are resource guards, not large-file responsiveness
-benchmarks. The grid/inspector show bounded previews for long values; they are not
-full-text editors. File selection/drop requires a modern browser. Clipboard
+There are no size caps. Above 8 MiB, 100,000 records, 512 columns, 1,000,000
+fields or a 1 MiB field, the review step asks for confirmation; files above 8 MiB
+are confirmed before the browser reads them. These thresholds
+are advisory, not large-file responsiveness benchmarks; very large input can make
+the tab unresponsive or exhaust its memory. The grid shows 512-byte previews; the
+inspector's full-value dialog renders 32,768 characters at a time and copy always
+takes the whole value. They are not full-text editors. File selection/drop requires a modern browser. Clipboard
 permission failures leave a manual paste field available.
 
 The scoped duplicate-scrollbar CSS depends on NSH 0.4's browser DOM classes;

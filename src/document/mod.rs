@@ -2,22 +2,8 @@
 use crate::error::EngineError;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-/// Maximum imported UTF-8 byte length, including an optional BOM.
-pub const MAX_INPUT_BYTES: usize = 8 * 1024 * 1024;
-/// Maximum number of data rows.
-pub const MAX_ROWS: usize = 100_000;
-/// Maximum schema width.
-pub const MAX_COLUMNS: usize = 512;
-/// Maximum stored fields (missing trailing fields consume no storage).
-pub const MAX_CELLS: usize = 1_000_000;
-/// Maximum rows returned by one window request.
+/// Maximum rows returned by one window request. Documents themselves are unbounded.
 pub const MAX_WINDOW_ROWS: usize = 256;
-/// Maximum logical cells returned by one window request.
-pub const MAX_WINDOW_CELLS: usize = 16_384;
-/// Maximum text bytes copied by one session row-window request.
-pub const MAX_WINDOW_BYTES: usize = 1024 * 1024;
-/// Maximum UTF-8 bytes per cell preview; wide windows may use a smaller limit.
-pub const MAX_CELL_PREVIEW_BYTES: usize = 256;
 
 /// A value's semantic type. Number retains its exact lexical form, not an f64.
 /// CSV imports produce Text only; absence in ragged rows reads as Missing.
@@ -150,9 +136,8 @@ impl Document {
         self.dirty
     }
 
-    /// Borrow a bounded row window without copying the dataset. Offset equal to
-    /// row_count is valid; larger offsets and oversized row/cell counts are errors.
-    /// Text size does not limit this borrowed view; the session bounds its copies.
+    /// Borrow a row window without copying the dataset. Offset equal to row_count
+    /// is valid; larger offsets and limits above MAX_WINDOW_ROWS are errors.
     pub fn window(&self, offset: usize, limit: usize) -> Result<&[Row], EngineError> {
         if offset > self.rows.len() || limit > MAX_WINDOW_ROWS {
             return Err(EngineError::new(
@@ -164,14 +149,7 @@ impl Document {
             ));
         }
         let end = offset.saturating_add(limit).min(self.rows.len());
-        let rows = &self.rows[offset..end];
-        if rows.len() * self.columns.len() > MAX_WINDOW_CELLS {
-            return Err(EngineError::new(
-                "WINDOW_LIMIT",
-                "Request fewer rows: window exceeds the cell limit.",
-            ));
-        }
-        Ok(rows)
+        Ok(&self.rows[offset..end])
     }
 
     /// Read a cell by document-scoped stable identities, including implicit Missing.

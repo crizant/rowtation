@@ -3,6 +3,18 @@
 export function createHost() {
   const pending = [];
   const fixture = (name, text) => new File([text], name, { type: 'text/csv' });
+  // Each slice the app reads waits for F3, so tests control when reads finish.
+  const delayed = (name, text) => {
+    const file = fixture(name, text);
+    Object.defineProperty(file, 'slice', { value: (start, end) => {
+      const blob = Blob.prototype.slice.call(file, start, end);
+      Object.defineProperty(blob, 'arrayBuffer', { value: () => new Promise(resolve => {
+        pending.push(() => resolve(Blob.prototype.arrayBuffer.call(blob)));
+      }) });
+      return blob;
+    } });
+    return file;
+  };
   document.addEventListener('click', event => {
     const input = event.target;
     if (!(input instanceof HTMLInputElement) || input.id !== 'rowtation-file-input') return;
@@ -20,15 +32,14 @@ export function createHost() {
       read();
       return;
     }
-    if (!['F2', 'F4', 'F7', 'F8', 'F9', 'F10'].includes(event.key)) return;
+    if (!['F2', 'F4', 'F6', 'F7', 'F8', 'F9', 'F10'].includes(event.key)) return;
     event.preventDefault();
     const dataTransfer = new DataTransfer();
     if (event.key === 'F2') {
-      const file = fixture('delayed.csv', 'name\nDelayed');
-      Object.defineProperty(file, 'arrayBuffer', { value: () => new Promise(resolve => {
-        pending.push(() => resolve(new TextEncoder().encode('name\nDelayed').buffer));
-      }) });
-      dataTransfer.items.add(file);
+      dataTransfer.items.add(delayed('delayed.csv', 'name\nDelayed'));
+    } else if (event.key === 'F6') {
+      // 9,000,003 bytes: past the 8 MiB confirmation threshold, read in one slice.
+      dataTransfer.items.add(delayed('large.csv', 'id\n' + '7\n'.repeat(4_500_000)));
     } else if (event.key === 'F4') {
       dataTransfer.items.add(fixture('invalid-utf8.csv', new Uint8Array([255])));
     } else if (event.key === 'F7') {

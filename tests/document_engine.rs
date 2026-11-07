@@ -1,8 +1,5 @@
 use nsh_app_rowtation::{
-    document::{
-        CellValue, MAX_CELL_PREVIEW_BYTES, MAX_CELLS, MAX_COLUMNS, MAX_INPUT_BYTES, MAX_ROWS,
-        MAX_WINDOW_BYTES, MAX_WINDOW_ROWS,
-    },
+    document::{CellValue, MAX_WINDOW_ROWS},
     formats::delimited::{parse, serialize},
     session::{DocumentSession, ExportOptions, ImportOptions, RowWindow},
 };
@@ -212,7 +209,7 @@ fn identities_and_revision_remain_stable_across_overlapping_windows_and_exports(
 }
 
 #[test]
-fn borrowed_windows_enforce_positions_row_and_cell_bounds() {
+fn borrowed_windows_enforce_positions_and_row_bounds() {
     let document = parse(b"a\nb\nc\n", ",", false).unwrap();
     assert_eq!(document.window(1, 256).unwrap().len(), 2);
     assert!(document.window(3, 1).unwrap().is_empty());
@@ -223,46 +220,27 @@ fn borrowed_windows_enforce_positions_row_and_cell_bounds() {
             "INVALID_WINDOW"
         );
     }
-    let wide = format!("{}\n", vec!["x"; MAX_COLUMNS].join(",")).repeat(33);
-    let document = parse(wide.as_bytes(), ",", false).unwrap();
-    assert_eq!(document.window(0, 33).unwrap_err().code(), "WINDOW_LIMIT");
-    assert_eq!(document.window(0, 32).unwrap().len(), 32);
 }
 
 #[test]
-fn imports_enforce_limits_without_truncation() {
-    assert_eq!(
-        parse(&vec![b'x'; MAX_INPUT_BYTES + 1], ",", false)
-            .unwrap_err()
-            .code(),
-        "INPUT_LIMIT"
-    );
-    let width = vec!["x"; MAX_COLUMNS].join(",");
+fn values_and_shapes_past_former_caps_round_trip() {
+    // Just past former caps: 1 MiB values, 512 columns and 100,000 rows. Inputs of
+    // tens of megabytes live in the ignored stress tests.
+    let long = format!("0{}", "雪".repeat(350_000));
+    let input = format!("value\n{long}\n=1+1\n\"\"\n");
+    let document = parse(input.as_bytes(), ",", true).unwrap();
+    assert_eq!(document.cell(1, 1).unwrap(), &CellValue::Text(long.clone()));
+    assert_eq!(serialize(&document, ",", true).unwrap(), input.into_bytes());
+
+    let width = vec!["x"; 513].join(",");
     assert_eq!(
         parse(width.as_bytes(), ",", false).unwrap().column_count(),
-        MAX_COLUMNS
+        513
     );
-    assert_eq!(
-        parse(format!("{width},x").as_bytes(), ",", true)
-            .unwrap_err()
-            .code(),
-        "COLUMN_LIMIT"
-    );
-    let rows = "x\n".repeat(MAX_ROWS);
+    let rows = "x\n".repeat(100_001);
     assert_eq!(
         parse(rows.as_bytes(), ",", false).unwrap().row_count(),
-        MAX_ROWS
-    );
-    assert_eq!(
-        parse(format!("{rows}x").as_bytes(), ",", false)
-            .unwrap_err()
-            .code(),
-        "DATA_LIMIT"
-    );
-    let fields = format!("{width}\n").repeat(MAX_CELLS / MAX_COLUMNS + 1);
-    assert_eq!(
-        parse(fields.as_bytes(), ",", false).unwrap_err().code(),
-        "DATA_LIMIT"
+        100_001
     );
 }
 
@@ -319,79 +297,136 @@ fn document_ids_are_unique_across_native_test_threads() {
     assert_ne!(first.id(), other_id);
 }
 
+fn window(offset: u32, limit: u32) -> RowWindow {
+    let mut request = RowWindow::default();
+    request.offset = offset;
+    request.limit = limit;
+    request
+}
+
 #[test]
-fn large_cell_row_identity_can_be_discovered_through_the_session() {
-    // The UTF-8 character straddles the preview boundary; never return half of it.
-    let text = format!(
-        "{}{}",
-        "x".repeat(MAX_CELL_PREVIEW_BYTES - 1),
-        "雪".repeat(700_000)
-    );
+fn row_windows_return_whole_values_unless_previews_are_requested() {
+    let text = "雪".repeat(100_000);
     let session = DocumentSession::new(
         format!("value\nbefore\n{text}\nafter").into_bytes(),
         ImportOptions::default(),
     )
     .unwrap();
-    let mut request = RowWindow::default();
-    request.offset = 1;
-    request.limit = 1;
-    let window = session.rows(request).unwrap();
-    assert_eq!(window.rows.len(), 1);
-    let preview = &window.rows[0].cells[0];
-    assert!(preview.truncated);
-    assert_eq!(preview.byte_length as usize, text.len());
+    let whole = session.rows(window(1, 1)).unwrap();
+    let cell = &whole.rows[0].cells[0];
+    assert_eq!(cell.text.as_deref(), Some(text.as_str()));
     assert_eq!(
-        preview.text.as_deref(),
-        Some("x".repeat(MAX_CELL_PREVIEW_BYTES - 1).as_str())
+        (cell.byte_length as usize, cell.truncated),
+        (text.len(), false)
     );
-    let row_id = window.rows[0].id;
-    let column_id = session.columns()[0].id;
-    let full = session.read_cell(row_id, column_id).unwrap();
-    assert!(!full.truncated);
-    assert_eq!(full.byte_length as usize, text.len());
+
+    let mut request = window(1, 1);
+    request.preview_bytes = Some(512);
+    let preview = session.rows(request).unwrap();
+    let cell = &preview.rows[0].cells[0];
+    assert_eq!(cell.text.as_deref(), Some("雪".repeat(170).as_str()));
+    assert_eq!(
+        (cell.byte_length as usize, cell.truncated),
+        (text.len(), true)
+    );
+    let full = session
+        .read_cell(preview.rows[0].id, session.columns()[0].id)
+        .unwrap();
     assert_eq!(full.text.as_deref(), Some(text.as_str()));
-    assert_eq!(session.metadata().revision, window.revision);
+    assert!(!full.truncated);
+    assert_eq!(session.metadata().revision, preview.revision);
     assert!(!session.metadata().dirty);
 }
 
 #[test]
-fn wide_row_previews_fit_the_total_byte_budget_without_losing_row_ids() {
-    let value = "x".repeat(128);
-    let input = format!("{}\n", vec![value.as_str(); MAX_COLUMNS].join(",")).repeat(32);
-    let mut options = ImportOptions::default();
-    options.headers = Some(false);
-    let session = DocumentSession::new(input.into_bytes(), options).unwrap();
-    let mut request = RowWindow::default();
-    request.limit = 32;
-    let window = session.rows(request).unwrap();
-    assert_eq!(window.rows.len(), 32);
-    let mut bytes = 0;
-    for row in &window.rows {
-        assert_eq!(row.cells.len(), MAX_COLUMNS);
-        for cell in &row.cells {
-            assert!(cell.truncated);
-            assert_eq!(cell.byte_length, 128);
-            bytes += cell.text.as_ref().unwrap().len();
-        }
-    }
-    assert_eq!(bytes, MAX_WINDOW_BYTES);
+fn previews_cut_on_character_boundaries_and_keep_short_values_exact() {
+    let session = DocumentSession::new(
+        "a,b,c,d,e\na雪🙂,,007,=SUM(A1)\n".as_bytes().to_vec(),
+        ImportOptions::default(),
+    )
+    .unwrap();
+    let cells = |bytes: u32| {
+        let mut request = window(0, 1);
+        request.preview_bytes = Some(bytes);
+        session.rows(request).unwrap().rows.remove(0).cells
+    };
+    let texts = |bytes: u32| {
+        cells(bytes)
+            .into_iter()
+            .map(|c| (c.text, c.truncated))
+            .collect::<Vec<_>>()
+    };
+    let some = |text: &str, truncated| (Some(text.to_owned()), truncated);
+    // "a雪🙂" is 1 + 3 + 4 bytes; previews never split a character.
+    assert_eq!(texts(0)[0], some("", true));
+    assert_eq!(texts(3)[0], some("a", true));
+    assert_eq!(texts(4)[0], some("a雪", true));
+    assert_eq!(texts(7)[0], some("a雪", true));
     assert_eq!(
-        session
-            .read_cell(window.rows[31].id, session.columns()[511].id)
-            .unwrap()
-            .text
-            .as_deref(),
-        Some(value.as_str())
+        texts(8),
+        [
+            some("a雪🙂", false),
+            some("", false),
+            some("007", false),
+            some("=SUM(A1)", false),
+            (None, false),
+        ]
     );
-    assert!(session.rows(RowWindow::default()).unwrap().rows.is_empty());
+    assert_eq!(cells(1)[0].byte_length, 8);
+    assert!(matches!(
+        cells(1)[4].kind,
+        nsh_app_rowtation::session::CellKind::Missing
+    ));
 }
 
 #[test]
-fn previews_distinguish_complete_empty_missing_and_boundary_values() {
-    let exact = "x".repeat(MAX_CELL_PREVIEW_BYTES);
-    let over = "x".repeat(MAX_CELL_PREVIEW_BYTES + 1);
+fn column_ranges_copy_only_requested_columns() {
+    let mut options = ImportOptions::default();
+    options.headers = Some(false);
+    let session = DocumentSession::new(b"a,b,c,d,e\nf,g\n".to_vec(), options).unwrap();
+    let range = |offset, limit| {
+        let mut request = window(0, 2);
+        request.column_offset = offset;
+        request.column_limit = limit;
+        session.rows(request)
+    };
+    let texts = |snapshot: nsh_app_rowtation::session::RowsSnapshot| {
+        snapshot
+            .rows
+            .into_iter()
+            .map(|r| r.cells.into_iter().map(|c| c.text).collect::<Vec<_>>())
+            .collect::<Vec<_>>()
+    };
+    let middle = range(Some(1), Some(2)).unwrap();
+    assert_eq!(middle.column_offset, 1);
+    assert_eq!(
+        texts(middle),
+        [
+            vec![Some("b".into()), Some("c".into())],
+            vec![Some("g".into()), None]
+        ]
+    );
+    assert_eq!(texts(range(Some(3), Some(u32::MAX)).unwrap())[0].len(), 2);
+    assert_eq!(texts(range(Some(5), None).unwrap())[0].len(), 0);
+    assert_eq!(texts(range(None, Some(0)).unwrap())[1].len(), 0);
+    assert_eq!(texts(range(None, None).unwrap())[0].len(), 5);
+    assert_eq!(
+        range(Some(6), None)
+            .err()
+            .map(|e| e.code().to_owned())
+            .as_deref(),
+        Some("INVALID_WINDOW")
+    );
+    assert_eq!(session.rows(window(0, 2)).unwrap().rust_ms, None);
+    let mut measured = window(0, 2);
+    measured.measure = Some(true);
+    assert!(session.rows(measured).unwrap().rust_ms.unwrap() >= 0.0);
+}
+
+#[test]
+fn snapshots_distinguish_empty_missing_and_text_values() {
     let session = DocumentSession::new(
-        format!("empty,exact,over,missing\n,{exact},{over}\n").into_bytes(),
+        b"empty,text,missing\n,abc\n".to_vec(),
         ImportOptions::default(),
     )
     .unwrap();
@@ -399,22 +434,17 @@ fn previews_distinguish_complete_empty_missing_and_boundary_values() {
     request.limit = 1;
     let window = session.rows(request).unwrap();
     let cells = &window.rows[0].cells;
-    assert_eq!(cells[0].text.as_deref(), Some(""));
-    assert_eq!((cells[0].truncated, cells[0].byte_length), (false, 0));
-    assert_eq!(cells[1].text.as_deref(), Some(exact.as_str()));
     assert_eq!(
-        (cells[1].truncated, cells[1].byte_length),
-        (false, MAX_CELL_PREVIEW_BYTES as u32)
+        (cells[0].text.as_deref(), cells[0].byte_length),
+        (Some(""), 0)
     );
-    assert_eq!(cells[2].text.as_deref(), Some(exact.as_str()));
     assert_eq!(
-        (cells[2].truncated, cells[2].byte_length),
-        (true, (MAX_CELL_PREVIEW_BYTES + 1) as u32)
+        (cells[1].text.as_deref(), cells[1].byte_length),
+        (Some("abc"), 3)
     );
     assert!(matches!(
-        cells[3].kind,
+        cells[2].kind,
         nsh_app_rowtation::session::CellKind::Missing
     ));
-    assert_eq!(cells[3].text, None);
-    assert_eq!((cells[3].truncated, cells[3].byte_length), (false, 0));
+    assert_eq!((cells[2].text.as_deref(), cells[2].byte_length), (None, 0));
 }

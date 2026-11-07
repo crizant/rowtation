@@ -879,9 +879,11 @@ name = "nsh-app-rowtation"
 version = "0.1.0"
 dependencies = [
  "csv",
+ "hashbrown 0.17.1",
  "js-sys",
  "nsh-base",
  "nsh-core",
+ "rustc-hash 2.1.3",
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",

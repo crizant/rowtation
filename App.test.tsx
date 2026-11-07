@@ -22,14 +22,14 @@ test("failed import preserves the document and successful import replaces it", a
   await app.press("Review import");
   await app.press("Import document");
   await app.waitFor("1 row · 1 column");
-  await app.press("Import");
+  await app.press("Import…");
   await app.paste("paste-input", { text: '\n"unclosed' });
   await app.press("Review import");
   await app.press("Import document");
   await app.waitFor("text:Check the separator and quoted fields, or choose another file. Your current document is unchanged.");
   await app.press("Cancel");
   expect(app.texts()).toContain("Original");
-  await app.press("Import");
+  await app.press("Import…");
   await app.clear("paste-input");
   await app.paste("paste-input", { text: "name\nReplacement" });
   await app.press("Review import");
@@ -43,7 +43,7 @@ test("mobile TSV import without headers and contextual inspector", async () => {
   await app.press("Paste from clipboard");
   await app.paste("paste-input", { text: "001\tMia\n002\tOliver" });
   await app.press("Review import");
-  expect(app.texts()).toContain("✓ TSV · Tab");
+  expect(app.texts()).toContain("Tab");
   await app.press("First row contains column headers");
   await app.press("Import document");
   await app.waitFor("2 rows · 2 columns");
@@ -101,4 +101,69 @@ test("wide tables split tall viewport reads to respect Rust cell-window limits",
   for (let column = 0; column < 9; column++) await app.keyboard.press("arrowright");
   await app.waitFor("Field 9");
   expect(app.texts()).toContain("r59c9");
+});
+
+test("large data imports only after an explicit confirmation", async () => {
+  const text = "id\n" + Array.from({ length: 100_001 }, (_, i) => String(i + 1)).join("\n");
+  const app = await open("./App.tsx", { width: 1280, height: 800, clipboard: text });
+  await app.press("Paste from clipboard");
+  await app.press("Review import");
+  await app.waitFor("This is a large dataset");
+  expect(app.texts().join("\n")).toContain("100,001 rows · 1 column");
+  expect(app.texts()).not.toContain("Import document");
+  await app.press("Cancel");
+  expect(app.texts()).toContain("Rowtation");
+  await app.press("Paste from clipboard");
+  await app.press("Review import");
+  await app.press("Import anyway");
+  await app.waitFor("100,001 rows · 1 column");
+});
+
+test("small data imports without a warning", async () => {
+  const app = await open("./App.tsx", { clipboard: "id\n1" });
+  await app.press("Paste from clipboard");
+  await app.press("Review import");
+  expect(app.texts()).not.toContain("This is a large dataset");
+  expect(app.texts()).toContain("Import document");
+});
+
+test("long values show previews in the grid and whole values on request", async () => {
+  const long = "雪".repeat(40_000) + "END";
+  const app = await open("./App.tsx", { width: 1280, height: 800, clipboard: `id,note\n007,${long}` });
+  await app.press("Paste from clipboard");
+  await app.press("Review import");
+  await app.press("Import document");
+  await app.waitFor("1 row · 2 columns");
+  expect(app.texts()).toContain("雪".repeat(170) + "…");
+  expect(app.texts().join("\n")).not.toContain("END");
+  await app.press("007");
+  await app.keyboard.press("arrowright");
+  await app.waitFor("117 KB · preview");
+  await app.press("copy-value");
+  await app.wait(100);
+  expect(app.clipboard()).toBe(long);
+  await app.press("View full value");
+  await app.waitFor("Showing 32,768 of 40,003 characters. Copy value copies all of it.");
+  await app.press("Show more");
+  await app.waitFor(long);
+  await app.press("copy-full-value");
+  await app.waitFor("Copied");
+  expect(app.clipboard()).toBe(long);
+});
+
+test("diagnostics are off until requested and stay in the tab", async () => {
+  const app = await open("./App.tsx", { width: 1280, height: 800, clipboard: "id\n1\n2" });
+  expect(app.texts()).not.toContain("Diagnostics · local only");
+  await app.keyboard.press("ctrl+shift+d");
+  await app.waitFor("Diagnostics · local only");
+  await app.press("Paste from clipboard");
+  await app.press("Review import");
+  await app.press("Import document");
+  await app.waitFor("2 rows · 1 column");
+  const log = app.texts().join("\n");
+  expect(log).toContain("Inspect: ");
+  expect(log).toContain("Parse: ");
+  expect(log).toContain("Row window: ");
+  await app.keyboard.press("ctrl+shift+d");
+  expect(app.texts()).not.toContain("Diagnostics · local only");
 });

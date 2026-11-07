@@ -1,12 +1,14 @@
 //! NSH transport records contain only requested snapshots; the session owns Rust data.
-use crate::inspection::{ColumnProfile, FrequentValue};
+use crate::inspection::{ColumnProfile, ProfileJob, ProfileProgress};
 use crate::{
-    document::{CellValue, Document, MAX_CELL_PREVIEW_BYTES, MAX_WINDOW_BYTES},
+    diagnostics::now_ms,
+    document::{CellValue, Document},
     error::EngineError,
     formats::delimited,
+    source::ImportSource,
 };
 use nsh_core::prelude::*;
-use std::collections::{HashMap, VecDeque};
+use std::collections::VecDeque;
 
 /// Explicit CSV/TSV import options. CSV with a header is the default.
 #[derive(JsObject, Default)]
@@ -28,7 +30,8 @@ pub struct ExportOptions {
     pub headers: Option<bool>,
 }
 
-/// A bounded range in the current row order, using zero-based positions.
+/// A bounded range in the current row order, using zero-based positions, optionally
+/// narrowed to a column range and to previews of long values.
 #[derive(JsObject, Default)]
 #[non_exhaustive]
 pub struct RowWindow {
@@ -36,6 +39,15 @@ pub struct RowWindow {
     pub offset: u32,
     /// Requested maximum rows, at most 256; zero is valid.
     pub limit: u32,
+    /// First column position; may equal columnCount. Defaults to 0.
+    pub column_offset: Option<u32>,
+    /// Maximum columns; defaults to every column from columnOffset.
+    pub column_limit: Option<u32>,
+    /// Copy at most this many UTF-8 bytes of each value, cut on a character
+    /// boundary and marked truncated. Defaults to whole values.
+    pub preview_bytes: Option<u32>,
+    /// Diagnostics: report rustMs. Defaults to false.
+    pub measure: Option<bool>,
 }
 
 /// Small document snapshot; revision and dirty remain unchanged by reads/export.
@@ -86,60 +98,64 @@ pub enum CellKind {
     Number,
 }
 
-/// A copied cell snapshot. Row windows may contain flagged UTF-8 prefixes;
-/// readCell always returns the full value. Only the payload for kind has a value.
+/// A copied cell snapshot. Only the payload for kind has a value. Values are whole
+/// unless a window asked for previews; readCell always returns the whole value.
 #[derive(JsObject, Default)]
 #[non_exhaustive]
 pub struct CellSnapshot {
     /// Discriminates missing, null, text, boolean and number.
     pub kind: CellKind,
-    /// Literal text or a flagged preview prefix for text cells; null otherwise.
+    /// Literal text for text cells; null otherwise.
     pub text: Option<String>,
     /// Boolean payload, or null.
     pub boolean: Option<bool>,
-    /// Exact numeric lexical form or a flagged preview prefix; null otherwise.
+    /// Exact numeric lexical form; null otherwise.
     pub number: Option<String>,
-    /// True when the payload is a preview prefix; readCell retrieves the full value.
-    pub truncated: bool,
-    /// Full UTF-8 payload length before previewing; zero for non-text/non-number cells.
+    /// UTF-8 length of the whole payload; zero for non-text/non-number cells.
     pub byte_length: u32,
+    /// True when text or number holds only a prefix of the value.
+    pub truncated: bool,
+}
+impl CellSnapshot {
+    fn new(value: &CellValue, preview: usize) -> Self {
+        let mut cell = Self::default();
+        let mut copy = |text: &str| {
+            cell.byte_length = saturating_u32(text.len());
+            let shown = prefix(text, preview);
+            cell.truncated = shown.len() < text.len();
+            Some(shown.to_owned())
+        };
+        let (kind, text, number, boolean) = match value {
+            CellValue::Missing => (CellKind::Missing, None, None, None),
+            CellValue::Null => (CellKind::Null, None, None, None),
+            CellValue::Text(text) => (CellKind::Text, copy(text), None, None),
+            CellValue::Number(text) => (CellKind::Number, None, copy(text), None),
+            CellValue::Boolean(value) => (CellKind::Boolean, None, None, Some(*value)),
+        };
+        cell.kind = kind;
+        cell.text = text;
+        cell.number = number;
+        cell.boolean = boolean;
+        cell
+    }
 }
 impl From<&CellValue> for CellSnapshot {
     fn from(value: &CellValue) -> Self {
-        Self::with_text_limit(value, usize::MAX)
+        Self::new(value, usize::MAX)
     }
 }
-impl CellSnapshot {
-    fn with_text_limit(value: &CellValue, limit: usize) -> Self {
-        let mut cell = Self::default();
-        match value {
-            CellValue::Missing => (),
-            CellValue::Null => cell.kind = CellKind::Null,
-            CellValue::Text(text) => {
-                cell.kind = CellKind::Text;
-                cell.text = Some(cell.text_prefix(text, limit));
-            }
-            CellValue::Boolean(value) => {
-                cell.kind = CellKind::Boolean;
-                cell.boolean = Some(*value);
-            }
-            CellValue::Number(text) => {
-                cell.kind = CellKind::Number;
-                cell.number = Some(cell.text_prefix(text, limit));
-            }
-        }
-        cell
-    }
 
-    fn text_prefix(&mut self, text: &str, limit: usize) -> String {
-        let mut end = limit.min(text.len());
-        while !text.is_char_boundary(end) {
-            end -= 1;
-        }
-        self.byte_length = text.len() as u32;
-        self.truncated = end < text.len();
-        text[..end].to_owned()
+/// The longest prefix of at most `bytes` bytes that ends on a character boundary.
+pub(crate) fn prefix(text: &str, bytes: usize) -> &str {
+    let mut end = text.len().min(bytes);
+    while !text.is_char_boundary(end) {
+        end -= 1;
     }
+    &text[..end]
+}
+
+pub(crate) fn saturating_u32(value: usize) -> u32 {
+    u32::try_from(value).unwrap_or(u32::MAX)
 }
 
 /// One row of a requested window, with cells in the returned schema order.
@@ -148,8 +164,7 @@ impl CellSnapshot {
 pub struct RowSnapshot {
     /// Stable document-scoped identity; use with readCell, never a display index.
     pub id: u32,
-    /// Cell previews in schema order, including implicit missing fields. Check
-    /// truncated before treating a text/number payload as the full value.
+    /// Full cell values in schema order, including implicit missing fields.
     pub cells: Vec<CellSnapshot>,
 }
 
@@ -163,8 +178,13 @@ pub struct RowsSnapshot {
     pub revision: u32,
     /// Zero-based start position.
     pub offset: u32,
+    /// Position of the first column in each row's cells.
+    pub column_offset: u32,
     /// Bounded row snapshots; fewer than limit at the end of the document.
     pub rows: Vec<RowSnapshot>,
+    /// When the window asked to measure: milliseconds Rust spent building this
+    /// snapshot, at the clock's resolution. Excludes the copy into JS.
+    pub rust_ms: Option<f64>,
 }
 
 /// Retains one Rust-owned document. Register cleanup(() => session.dispose()) in
@@ -174,6 +194,7 @@ pub struct RowsSnapshot {
 pub struct DocumentSession {
     document: Document,
     profiles: VecDeque<ColumnProfile>,
+    job: Option<ProfileJob>,
 }
 
 #[class]
@@ -183,8 +204,23 @@ impl DocumentSession {
     pub fn new(input: Vec<u8>, options: ImportOptions) -> Result<Self, EngineError> {
         Ok(Self {
             profiles: VecDeque::new(),
+            job: None,
             document: delimited::parse(
                 &input,
+                options.delimiter.as_deref().unwrap_or(","),
+                options.headers.unwrap_or(true),
+            )?,
+        })
+    }
+
+    /// Import a reviewed source without copying it through JS. The source keeps its
+    /// bytes, so a failed import can be retried with other options; dispose it after.
+    pub fn from_source(source: &ImportSource, options: ImportOptions) -> Result<Self, EngineError> {
+        Ok(Self {
+            profiles: VecDeque::new(),
+            job: None,
+            document: delimited::parse(
+                &source.bytes,
                 options.delimiter.as_deref().unwrap_or(","),
                 options.headers.unwrap_or(true),
             )?,
@@ -204,7 +240,7 @@ impl DocumentSession {
         }
     }
 
-    /// Retrieve ordered schema only, at most 512 columns.
+    /// Retrieve the ordered schema.
     pub fn columns(&self) -> Vec<ColumnMetadata> {
         self.document
             .columns()
@@ -217,107 +253,125 @@ impl DocumentSession {
             .collect()
     }
 
-    /// Retrieve row identities and cell previews: at most 256 rows, 16,384 logical
-    /// cells and 1 MiB of text. Text/number previews are UTF-8 prefixes of at most
-    /// 256 bytes, reduced equally for wide windows to fit the total byte budget.
-    /// Each cell reports truncated and byteLength; readCell returns the full value.
-    /// Oversized row/cell counts throw INVALID_WINDOW or WINDOW_LIMIT.
+    /// Retrieve row identities and cell values for at most 256 rows, in the requested
+    /// columns. Values are whole unless previewBytes is set. An offset past rowCount,
+    /// a columnOffset past columnCount or a limit above 256 throws INVALID_WINDOW.
     pub fn rows(&self, window: RowWindow) -> Result<RowsSnapshot, EngineError> {
+        let started = window.measure.unwrap_or(false).then(now_ms);
         let rows = self
             .document
             .window(window.offset as usize, window.limit as usize)?;
-        let cell_count = rows.len() * self.document.column_count();
-        let preview_bytes = MAX_CELL_PREVIEW_BYTES.min(MAX_WINDOW_BYTES / cell_count.max(1));
-        Ok(RowsSnapshot {
+        let count = self.document.column_count();
+        let start = window.column_offset.unwrap_or(0) as usize;
+        if start > count {
+            return Err(EngineError::new(
+                "INVALID_WINDOW",
+                format!("Column offset must be at most {count}."),
+            ));
+        }
+        let end = window.column_limit.map_or(count, |limit| {
+            start.saturating_add(limit as usize).min(count)
+        });
+        let preview = window
+            .preview_bytes
+            .map_or(usize::MAX, |bytes| bytes as usize);
+        let mut snapshot = RowsSnapshot {
             document_id: self.document.id().into(),
             revision: self.document.revision(),
             offset: window.offset,
+            column_offset: saturating_u32(start),
             rows: rows
                 .iter()
                 .map(|r| RowSnapshot {
                     id: r.id(),
-                    cells: (0..self.document.column_count())
+                    cells: (start..end)
                         .map(|i| {
-                            CellSnapshot::with_text_limit(
+                            CellSnapshot::new(
                                 r.cells().get(i).unwrap_or(&CellValue::Missing),
-                                preview_bytes,
+                                preview,
                             )
                         })
                         .collect(),
                 })
                 .collect(),
-        })
+            rust_ms: None,
+        };
+        snapshot.rust_ms = started.map(|started| now_ms() - started);
+        Ok(snapshot)
     }
 
-    /// Read the full cell by stable IDs discovered through rows and columns.
-    /// Always reports truncated false, including for values over the window budget.
+    /// Read one cell by stable IDs discovered through rows and columns.
     /// Unknown IDs throw UNKNOWN_ROW or UNKNOWN_COLUMN; absent fields are missing.
     pub fn read_cell(&self, row_id: u32, column_id: u32) -> Result<CellSnapshot, EngineError> {
         Ok(self.document.cell(row_id, column_id)?.into())
     }
 
     /// Exact column statistics, computed once per cached column. Keeps at most eight
-    /// small summaries; frequency maps borrow Rust text and are freed after profiling.
+    /// small summaries. Scans the whole column at once; prefer profileStep in the UI.
     pub fn profile(&mut self, column_id: u32) -> Result<ColumnProfile, EngineError> {
-        if let Some(profile) = self.profiles.iter().find(|p| p.column_id == column_id) {
-            return Ok(profile.clone());
-        }
-        let index = self
-            .document
-            .columns()
-            .iter()
-            .position(|c| c.id() == column_id)
-            .ok_or_else(|| {
-                EngineError::new("UNKNOWN_COLUMN", "Select a column in this document.")
-            })?;
-        let mut counts: HashMap<&str, u32> = HashMap::new();
-        let mut profile = ColumnProfile {
-            column_id,
-            kind: "Text".into(),
-            ..Default::default()
-        };
-        for row in &self.document.rows {
-            match row.cells().get(index) {
-                Some(CellValue::Text(value)) => {
-                    *counts.entry(value.as_str()).or_default() += 1;
-                    if value.is_empty() {
-                        profile.empty_count += 1;
-                    }
-                }
-                _ => profile.missing_count += 1,
+        loop {
+            if let Some(profile) = self.profile_step(column_id, u32::MAX)?.profile {
+                return Ok(profile);
             }
         }
-        profile.unique_count = counts.len() as u32;
-        let mut top: Vec<_> = counts
-            .into_iter()
-            .filter(|(value, _)| !value.is_empty())
-            .collect();
-        // Only five entries are needed, so avoid sorting the whole distinct-value set.
-        let order = |a: &(&str, u32), b: &(&str, u32)| b.1.cmp(&a.1).then_with(|| a.0.cmp(b.0));
-        if top.len() > 5 {
-            top.select_nth_unstable_by(5, order);
-            top.truncate(5);
+    }
+
+    /// Drop an unfinished profile scan and its distinct-value table. Finished profiles
+    /// stay cached. Call when the UI abandons the column it was profiling.
+    pub fn cancel_profile(&mut self) {
+        self.job = None;
+    }
+
+    /// Count at most `rows` more rows of a column's statistics and report progress.
+    /// Call again with the same column until `profile` is set, yielding in between to
+    /// keep the UI responsive. Starting another column discards unfinished work.
+    /// Finished and cached profiles return at once. Unknown IDs throw UNKNOWN_COLUMN.
+    pub fn profile_step(
+        &mut self,
+        column_id: u32,
+        rows: u32,
+    ) -> Result<ProfileProgress, EngineError> {
+        let total = saturating_u32(self.document.row_count());
+        if let Some(profile) = self.profiles.iter().find(|p| p.column_id == column_id) {
+            return Ok(ProfileProgress {
+                column_id,
+                scanned: total,
+                total,
+                profile: Some(profile.clone()),
+            });
         }
-        top.sort_unstable_by(order);
-        profile.common_values = top
-            .into_iter()
-            .map(|(value, count)| {
-                let mut end = value.len().min(MAX_CELL_PREVIEW_BYTES);
-                while !value.is_char_boundary(end) {
-                    end -= 1;
-                }
-                FrequentValue {
-                    value: value[..end].into(),
-                    count,
-                    truncated: end < value.len(),
-                }
-            })
-            .collect();
-        if self.profiles.len() == 8 {
-            self.profiles.pop_front();
+        if self.job.as_ref().map(ProfileJob::column_id) != Some(column_id) {
+            let index = self
+                .document
+                .columns()
+                .iter()
+                .position(|c| c.id() == column_id)
+                .ok_or_else(|| {
+                    EngineError::new("UNKNOWN_COLUMN", "Select a column in this document.")
+                })?;
+            self.job = Some(ProfileJob::new(column_id, index));
         }
-        self.profiles.push_back(profile.clone());
-        Ok(profile)
+        let Some(job) = self.job.as_mut() else {
+            return Err(EngineError::new(
+                "UNKNOWN_COLUMN",
+                "Select a column in this document.",
+            ));
+        };
+        let profile = job.step(&self.document, rows as usize);
+        let scanned = saturating_u32(job.scanned());
+        if let Some(profile) = &profile {
+            self.job = None;
+            if self.profiles.len() == 8 {
+                self.profiles.pop_front();
+            }
+            self.profiles.push_back(profile.clone());
+        }
+        Ok(ProfileProgress {
+            column_id,
+            scanned,
+            total,
+            profile,
+        })
     }
 
     /// Serialize the whole document to UTF-8 bytes (Uint8Array). This is an internal
