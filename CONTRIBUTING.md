@@ -33,10 +33,17 @@ browser WASM compatibility and document native-only feature exclusions.
 
 ## Continuous integration
 
-[CI](.github/workflows/ci.yml) runs one `Validate web` job on pull requests targeting
-`main`, pushes to `main`, and manual workflow runs. It checks Rust formatting,
-Rust/TSX types, bundler diagnostics, headless tests and browser/WASM integration.
-It uses NSH 0.4.0 and Ubuntu 24.04's installed Chrome and LLVM tools.
+[CI](.github/workflows/ci.yml) runs three independent jobs concurrently on pull
+requests targeting `main`, pushes to `main`, and manual workflow runs:
+
+- `Rust formatting`: `cargo fmt --check`, with only Rust and rustfmt setup.
+- `Static checks and headless tests`: `nsh check`, `nsh build`, then `nsh test`,
+  sharing compilation within the job.
+- `Browser and WASM integration`: `nsh test --target web` using installed Chrome.
+
+The two NSH jobs share a matrix definition with fail-fast disabled, so a failure
+in one suite does not cancel the other. Each gets its own runner and uses NSH
+0.4.0 and Ubuntu 24.04's installed Chrome and LLVM tools.
 
 Two caches reduce setup and compilation time:
 
@@ -44,13 +51,16 @@ Two caches reduce setup and compilation time:
   NSH release, operating system and architecture.
 - Cargo registry/git dependencies, `target/` (native and WASM builds), and NSH's
   generated runner workspace in `.nsh/rust/`. Keys include the compiler identity,
-  NSH version, Cargo manifests/lockfile and source fingerprint. Compatible prefix
-  restores reuse dependencies after source or lockfile changes.
+  NSH version, validation suite, Cargo manifests/lockfile and source fingerprint.
+  Suite-specific keys let both parallel jobs save their own build results without
+  competing for the same cache entry. Compatible prefix restores stay within the
+  same suite and compiler, reusing dependencies after source or lockfile changes.
 
 Successful runs save new cache entries; an exact hit reuses the existing entry.
 Development debug symbols and incremental compilation are disabled in CI to keep
-archives smaller. The first run is expected to be slower; the job summary reports
-exact cache hits. Update the cache key's `v1` prefix if its storage policy changes.
+archives smaller. The first run is expected to be slower; each NSH job summary
+reports exact cache hits. Update the relevant cache key's version prefix if its
+storage policy changes (`nsh-tools-v1` and `rust-web-v2` currently).
 Superseded runs for the same branch or pull request are canceled automatically.
 
 The workflow uses read-only repository access and does not publish the website.

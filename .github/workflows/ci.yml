@@ -22,8 +22,31 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  format:
+    name: Rust formatting
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Prepare Rust formatting tools
+        run: |
+          rustup toolchain install stable --profile minimal --component rustfmt
+          rustup default stable
+
+      - name: Check Rust formatting
+        run: cargo fmt --check
+
   validate:
-    name: Validate web
+    name: ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - suite: checks
+            name: Static checks and headless tests
+          - suite: browser
+            name: Browser and WASM integration
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -32,7 +55,7 @@ jobs:
       - name: Prepare Rust and browser build tools
         id: toolchain
         run: |
-          rustup toolchain install stable --profile minimal --component rustfmt --target wasm32-unknown-unknown
+          rustup toolchain install stable --profile minimal --target wasm32-unknown-unknown
           rustup default stable
           echo "rust=$(rustc -vV | sha256sum | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
           echo /usr/lib/llvm-18/bin >> "$GITHUB_PATH"
@@ -74,25 +97,26 @@ jobs:
             target
             .nsh/rust
           # New sources save a new snapshot; restore the latest compatible build
-          # when sources or the lockfile change. Never reuse across compilers.
-          key: rust-web-v1-${{ runner.os }}-${{ runner.arch }}-${{ env.NSH_VERSION }}-${{ steps.toolchain.outputs.rust }}-${{ hashFiles('Cargo.lock', 'Cargo.toml') }}-${{ hashFiles('**/*.rs', '**/*.tsx', '**/*.ts', 'nsh.json', 'tsconfig.json', '.github/workflows/ci.yml', '!.nsh/**', '!target/**') }}
+          # when sources or the lockfile change. Keep suites and compilers isolated.
+          key: rust-web-v2-${{ runner.os }}-${{ runner.arch }}-${{ matrix.suite }}-${{ env.NSH_VERSION }}-${{ steps.toolchain.outputs.rust }}-${{ hashFiles('Cargo.lock', 'Cargo.toml') }}-${{ hashFiles('**/*.rs', '**/*.tsx', '**/*.ts', 'nsh.json', 'tsconfig.json', '.github/workflows/ci.yml', '!.nsh/**', '!target/**') }}
           restore-keys: |
-            rust-web-v1-${{ runner.os }}-${{ runner.arch }}-${{ env.NSH_VERSION }}-${{ steps.toolchain.outputs.rust }}-${{ hashFiles('Cargo.lock', 'Cargo.toml') }}-
-            rust-web-v1-${{ runner.os }}-${{ runner.arch }}-${{ env.NSH_VERSION }}-${{ steps.toolchain.outputs.rust }}-
-
-      - name: Check Rust formatting
-        run: cargo fmt --check
+            rust-web-v2-${{ runner.os }}-${{ runner.arch }}-${{ matrix.suite }}-${{ env.NSH_VERSION }}-${{ steps.toolchain.outputs.rust }}-${{ hashFiles('Cargo.lock', 'Cargo.toml') }}-
+            rust-web-v2-${{ runner.os }}-${{ runner.arch }}-${{ matrix.suite }}-${{ env.NSH_VERSION }}-${{ steps.toolchain.outputs.rust }}-
 
       - name: Check Rust and TSX types
+        if: matrix.suite == 'checks'
         run: nsh check
 
       - name: Check bundler diagnostics
+        if: matrix.suite == 'checks'
         run: nsh build
 
       - name: Run Rust and headless UI tests
+        if: matrix.suite == 'checks'
         run: nsh test
 
       - name: Run browser and WASM integration tests
+        if: matrix.suite == 'browser'
         run: nsh test --target web --browser /usr/bin/google-chrome
 
       - name: Record cache results
