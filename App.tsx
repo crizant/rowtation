@@ -58,13 +58,21 @@ function DocumentView(props: { document: OpenDocument; onClose: () => void; onIm
     };
     step();
   }
+  /** Stop an unfinished scan and release it in Rust; finished profiles stay cached. */
+  function stopProfile() {
+    run++;
+    if (progress() != null) props.document.session.cancelProfile();
+    progress.set(null);
+  }
+  /** Closing the narrow-screen inspector abandons its scan; the side panel keeps it. */
+  function closeInfo() {
+    info.set(false);
+    if (!wide()) stopProfile();
+  }
   function select(cell: CellSelection | null, columnId: number | null) {
     selection.set(cell);
     if (column()?.id === columnId) return;
-    run++;
-    // Release the abandoned scan in Rust; finished profiles stay cached.
-    if (progress() != null) props.document.session.cancelProfile();
-    progress.set(null);
+    stopProfile();
     profile.set(null);
     column.set(props.document.columns.find(item => item.id === columnId) ?? null);
     if (wide() || info()) ensureProfile();
@@ -78,7 +86,7 @@ function DocumentView(props: { document: OpenDocument; onClose: () => void; onIm
     const value = timed("Read whole value", () => props.document.session.readCell(cell.rowId, cell.columnId), () => bytes(cell.preview.byteLength));
     return value.text ?? value.number ?? "";
   }
-  function showValue() { info.set(false); full.set(wholeValue()); }
+  function showValue() { closeInfo(); full.set(wholeValue()); }
   let copied: number | undefined;
   cleanup(() => clearTimeout(copied));
   async function copyValue() {
@@ -131,10 +139,10 @@ function DocumentView(props: { document: OpenDocument; onClose: () => void; onIm
       </If>
     </View>
     <If when={info() && windowSize().width < 900}>
-      <Dialog title="Column information" onClose={() => info.set(false)}>
+      <Dialog title="Column information" onClose={closeInfo}>
         <Scroll style={{ maxHeight: windowSize().height * 0.6 }} class="min-h-0"><Inspector column={column()} profile={profile()} metadata={props.document.metadata} selection={selection()} progress={progress()}
           copyLabel={copyLabel()} onShowValue={showValue} onCopyValue={() => void copyValue()} /></Scroll>
-        <Button label="Done" compact={platform.desktop} onPress={() => info.set(false)} />
+        <Button label="Done" compact={platform.desktop} onPress={closeInfo} />
       </Dialog>
     </If>
     <If when={full() != null}>
