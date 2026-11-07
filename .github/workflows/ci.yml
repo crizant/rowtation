@@ -1,0 +1,108 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  NSH_VERSION: v0.4.0
+  # Keep reusable dependency artifacts small enough to restore quickly.
+  CARGO_PROFILE_DEV_DEBUG: '0'
+  CARGO_INCREMENTAL: '0'
+  CARGO_TERM_COLOR: always
+
+jobs:
+  validate:
+    name: Validate web
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Prepare Rust and browser build tools
+        id: toolchain
+        run: |
+          rustup toolchain install stable --profile minimal --component rustfmt --target wasm32-unknown-unknown
+          rustup default stable
+          echo "rust=$(rustc -vV | sha256sum | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+          echo /usr/lib/llvm-18/bin >> "$GITHUB_PATH"
+          /usr/lib/llvm-18/bin/clang --version
+          /usr/lib/llvm-18/bin/llvm-ar --version
+          /usr/bin/google-chrome --version
+
+      - name: Restore NSH distribution and downloaded tools
+        id: nsh-cache
+        uses: actions/cache@v6
+        with:
+          path: |
+            .nsh/cli
+            ~/.cache/nsh/typescript-*
+          key: nsh-tools-v1-${{ runner.os }}-${{ runner.arch }}-${{ env.NSH_VERSION }}
+
+      - name: Install NSH
+        if: steps.nsh-cache.outputs.cache-hit != 'true'
+        env:
+          NSH_INSTALL_DIR: ${{ github.workspace }}/.nsh/cli
+        run: |
+          curl --fail --location --retry 3 "https://github.com/longbridge/nsh/releases/download/$NSH_VERSION/install.sh" | sh
+          # Retain the web runtime; CI does not use the other bundled platforms.
+          find "$NSH_INSTALL_DIR/runtime" -mindepth 1 -maxdepth 1 ! -name web -exec rm -rf {} +
+          rm -rf "$NSH_INSTALL_DIR/embed"
+
+      - name: Add NSH to PATH
+        run: |
+          echo "$GITHUB_WORKSPACE/.nsh/cli/bin" >> "$GITHUB_PATH"
+          .nsh/cli/bin/nsh --version
+
+      - name: Restore Rust and WASM builds
+        id: rust-cache
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+            .nsh/rust
+          # New sources save a new snapshot; restore the latest compatible build
+          # when sources or the lockfile change. Never reuse across compilers.
+          key: rust-web-v1-${{ runner.os }}-${{ runner.arch }}-${{ env.NSH_VERSION }}-${{ steps.toolchain.outputs.rust }}-${{ hashFiles('Cargo.lock', 'Cargo.toml') }}-${{ hashFiles('**/*.rs', '**/*.tsx', '**/*.ts', 'nsh.json', 'tsconfig.json', '.github/workflows/ci.yml', '!.nsh/**', '!target/**') }}
+          restore-keys: |
+            rust-web-v1-${{ runner.os }}-${{ runner.arch }}-${{ env.NSH_VERSION }}-${{ steps.toolchain.outputs.rust }}-${{ hashFiles('Cargo.lock', 'Cargo.toml') }}-
+            rust-web-v1-${{ runner.os }}-${{ runner.arch }}-${{ env.NSH_VERSION }}-${{ steps.toolchain.outputs.rust }}-
+
+      - name: Check Rust formatting
+        run: cargo fmt --check
+
+      - name: Check Rust and TSX types
+        run: nsh check
+
+      - name: Check bundler diagnostics
+        run: nsh build
+
+      - name: Run Rust and headless UI tests
+        run: nsh test
+
+      - name: Run browser and WASM integration tests
+        run: nsh test --target web --browser /usr/bin/google-chrome
+
+      - name: Record cache results
+        env:
+          NSH_CACHE_HIT: ${{ steps.nsh-cache.outputs.cache-hit }}
+          RUST_CACHE_HIT: ${{ steps.rust-cache.outputs.cache-hit }}
+        run: |
+          {
+            echo '### CI caches'
+            echo "NSH tools exact cache hit: ${NSH_CACHE_HIT:-false}"
+            echo "Rust/WASM exact cache hit: ${RUST_CACHE_HIT:-false}"
+            echo 'Compatible partial Rust cache restores are reported in the restore step.'
+          } >> "$GITHUB_STEP_SUMMARY"
