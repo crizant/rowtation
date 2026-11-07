@@ -67,7 +67,10 @@ storage policy changes (`nsh-tools-v1` and `rust-web-v2` currently).
 Superseded runs for the same branch or pull request are canceled automatically.
 
 The workflow uses read-only repository access and does not publish the website.
-Cloudflare continues to build and deploy independently when `main` changes.
+Cloudflare Pages builds and deploys independently when `main` changes. Its
+GitHub integration build command is `sh scripts/cloudflare-pages-build.sh`, and
+its output directory is `dist/Rowtation`. That script installs the wasm-bindgen
+CLI version from `Cargo.lock` before packaging.
 
 
 The local file/layout script uses a test-only browser host with synthetic File and

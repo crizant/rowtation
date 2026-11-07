@@ -140,6 +140,12 @@ Open http://localhost:8080. Deploy that directory to a static host; a backend
 service is not required by the planned architecture. Packaging does not publish
 the website. Test imports against the deployed origin before release. Downloads are not implemented.
 
+Cloudflare Pages builds from the GitHub integration. Its build command is
+`sh scripts/cloudflare-pages-build.sh`, and its output directory is
+`dist/Rowtation`. The script installs the Linux toolchain, NSH 0.4.0, and the
+wasm-bindgen CLI version in `Cargo.lock`, then runs `nsh package --target web -o dist`.
+It is for the Pages Linux image; local macOS builds use the commands above.
+
 ## Project layout
 
 ```text
@@ -158,6 +164,7 @@ tests/                 Synthetic Rust tests and test-only TSX bridge entry
 Cargo.toml             Rust crate and NSH dependencies
 Cargo.lock             Resolved application dependencies
 nsh.json               App metadata and mixed-template configuration
+scripts/               Pages package command and local browser checks
 docs/                  Product scope, architecture and delivery plan
 DESIGN.md              UI standards
 AGENTS.md              Contributor and coding-agent constraints
