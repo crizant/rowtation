@@ -30,6 +30,39 @@ Prerequisites:
 No npm dependencies are currently needed. See the
 [NSH documentation](https://nsh.dev) for CLI setup.
 
+### macOS toolchain setup
+
+Use a [rustup-managed Rust installation](https://rust-lang.org/tools/install/)
+so the browser target can be installed independently. Homebrew's `rust` formula
+alone does not include the WASM standard library. An existing Homebrew Rust
+installation can remain installed; put rustup's tools first on `PATH`.
+
+```sh
+brew install llvm
+rustup target add wasm32-unknown-unknown
+rustup component add rustfmt
+```
+
+On Apple Silicon, include `~/.cargo/bin` and `/opt/homebrew/opt/llvm/bin` before
+the other compiler paths. For fish, persist these paths with:
+
+```fish
+fish_add_path --universal --move $HOME/.cargo/bin /opt/homebrew/opt/llvm/bin
+```
+
+For zsh, add this to `~/.zshrc`, then open a new terminal:
+
+```sh
+export PATH="$HOME/.cargo/bin:/opt/homebrew/opt/llvm/bin:$PATH"
+```
+
+Verify `rustc --print sysroot` points into `.rustup`,
+`rustup target list --installed` lists `wasm32-unknown-unknown`, and
+`clang` and `llvm-ar` resolve. If a mixed web build reports `can't find crate for
+core`, check these paths and install the target for the active toolchain.
+
+### Commands
+
 ```sh
 nsh run --target web                 # Develop in the browser
 nsh check                            # Check Rust and generated TSX types
