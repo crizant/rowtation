@@ -3,9 +3,9 @@
 The current target is web, on desktop and mobile browsers. Native desktop, mobile
 and TUI builds are outside this scaffold's scope.
 
-The starter demonstrates the TSX-to-Rust bridge: Rust owns the counter and TSX
-mirrors its returned value. The semantic button supports keyboard, touch and pointer input.
-The root fills its surface and respects device safe areas.
+The current screen is a placeholder while import and table UI are planned.
+The root fills its surface and respects device safe areas. The shared semantic
+button supports keyboard, touch and pointer input.
 
 Use NSH's default semantic theme in light and dark appearances: `background` and
 `foreground` for the surface, `primary` and `primary-foreground` for the main action,
@@ -13,7 +13,7 @@ and `ring` for visible keyboard focus. Add future app-specific colors through a
 theme file configured in `nsh.json`, keeping literal colors out of presentation code.
 
 Use the Tailwind spacing and typography scales: a 4-unit content gap, 2xl page title,
-3xl counter and lg button label. Controls use the theme radius and a minimum
+lg supporting text and button labels. Controls use the theme radius and a minimum
 44-point height. Keep the layout centered and avoid fixed viewport widths.
 
 Build shared controls in `components/` on top of `nsh/base`. Button hover and pressed
