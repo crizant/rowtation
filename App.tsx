@@ -30,7 +30,7 @@ function DocumentView(props: { document: OpenDocument; onClose: () => void; onIm
   }
   return <View class="flex-1 min-h-0 min-w-0 bg-muted/20">
     <Toolbar accessibilityLabel="Document toolbar" class="min-h-16 shrink-0 flex-row items-center gap-3 border-b border-border px-4 py-2 md:px-5">
-      <Button label="‹" accessibilityLabel="Close document" quiet icon onPress={() => props.onClose()} testID="close-document" />
+      <Button label="Close document" quiet icon="caret-left" onPress={() => props.onClose()} testID="close-document" />
       <View class="flex-1 min-w-0 flex-row items-center gap-3">
         <Text class="line-clamp-1 shrink text-base font-semibold text-foreground">{props.document.name}</Text>
         <Badge label={props.document.metadata.delimiter === "\t" ? "TSV" : "CSV"} />
