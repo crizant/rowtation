@@ -42,7 +42,11 @@ this internal serializer emits literal text unchanged.
 
 Limits reject excessive input without truncation: 8 MiB input, 100,000 data rows,
 512 columns, 1,000,000 stored fields, and 32 MiB serialized output. Row windows are
-limited to 256 rows, 16,384 logical cells and 1 MiB of text. These are conservative
+limited to 256 rows, 16,384 logical cells and 1 MiB of preview text. Each cell
+preview contains at most 256 UTF-8 bytes (less for wide windows), with explicit
+`truncated` and original `byteLength` metadata. Row IDs remain available even for
+large cells; `readCell()` returns their full values on demand. Stored data and
+serialization are never shortened by previews. These are conservative
 resource guards, not measured large-file performance guarantees. Parsing remains
 synchronous on the browser thread.
 

@@ -11,7 +11,26 @@ function throwsMessage(action: () => unknown, message: string): boolean {
   return false;
 }
 
+function verifyLargeCellPreview() {
+  const bytes = new Uint8Array(2 * 1024 * 1024);
+  bytes.fill(120);
+  const session = new DocumentSession(bytes, { headers: false });
+  try {
+    const window = session.rows({ offset: 0, limit: 1 });
+    const preview = window.rows[0].cells[0];
+    const full = session.readCell(window.rows[0].id, session.columns()[0].id);
+    if (!preview.truncated || preview.byteLength !== bytes.length ||
+      preview.text !== "x".repeat(256) || full.truncated ||
+      full.byteLength !== bytes.length || full.text !== "x".repeat(bytes.length)) {
+      throw new Error("Large cell preview/readCell contract failed");
+    }
+  } finally {
+    session.dispose();
+  }
+}
+
 function DocumentSmoke() {
+  verifyLargeCellPreview();
   const fixture = new Uint8Array([105, 100, 10, 48, 48, 49, 50, 51, 10]);
   const session = new DocumentSession(fixture, {});
   let live = true;
@@ -24,6 +43,7 @@ function DocumentSmoke() {
   const output = session.serialize({});
   if (metadata.rowCount !== 1 || metadata.columnCount !== 1 || metadata.dirty ||
     metadata.revision !== 0 || window.documentId !== metadata.id ||
+    cell.truncated || cell.byteLength !== 5 || window.rows[0].cells[0].truncated ||
     columns[0].name !== "id" || cell.kind !== "text" || cell.text !== "00123" ||
     output.length !== fixture.length || output.some((byte, i) => byte !== fixture[i]) ||
     !throwsMessage(() => session.rows({ offset: 0, limit: 257 }), "INVALID_WINDOW") ||

@@ -14,8 +14,10 @@ pub const MAX_CELLS: usize = 1_000_000;
 pub const MAX_WINDOW_ROWS: usize = 256;
 /// Maximum logical cells returned by one window request.
 pub const MAX_WINDOW_CELLS: usize = 16_384;
-/// Maximum text bytes returned by one window request; request fewer rows if exceeded.
+/// Maximum text bytes copied by one session row-window request.
 pub const MAX_WINDOW_BYTES: usize = 1024 * 1024;
+/// Maximum UTF-8 bytes per cell preview; wide windows may use a smaller limit.
+pub const MAX_CELL_PREVIEW_BYTES: usize = 256;
 
 /// A value's semantic type. Number retains its exact lexical form, not an f64.
 /// CSV imports produce Text only; absence in ragged rows reads as Missing.
@@ -149,7 +151,8 @@ impl Document {
     }
 
     /// Borrow a bounded row window without copying the dataset. Offset equal to
-    /// row_count is valid; larger offsets and oversized requests are errors.
+    /// row_count is valid; larger offsets and oversized row/cell counts are errors.
+    /// Text size does not limit this borrowed view; the session bounds its copies.
     pub fn window(&self, offset: usize, limit: usize) -> Result<&[Row], EngineError> {
         if offset > self.rows.len() || limit > MAX_WINDOW_ROWS {
             return Err(EngineError::new(
@@ -166,20 +169,6 @@ impl Document {
             return Err(EngineError::new(
                 "WINDOW_LIMIT",
                 "Request fewer rows: window exceeds the cell limit.",
-            ));
-        }
-        let bytes: usize = rows
-            .iter()
-            .flat_map(|r| &r.cells)
-            .map(|c| match c {
-                CellValue::Text(s) | CellValue::Number(s) => s.len(),
-                _ => 0,
-            })
-            .sum();
-        if bytes > MAX_WINDOW_BYTES {
-            return Err(EngineError::new(
-                "WINDOW_LIMIT",
-                "Request fewer rows or read a single cell: window exceeds the text byte limit.",
             ));
         }
         Ok(rows)

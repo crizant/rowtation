@@ -1,7 +1,7 @@
 use nsh_app_rowtation::{
     document::{
-        CellValue, MAX_CELLS, MAX_COLUMNS, MAX_INPUT_BYTES, MAX_ROWS, MAX_WINDOW_BYTES,
-        MAX_WINDOW_ROWS,
+        CellValue, MAX_CELL_PREVIEW_BYTES, MAX_CELLS, MAX_COLUMNS, MAX_INPUT_BYTES, MAX_ROWS,
+        MAX_WINDOW_BYTES, MAX_WINDOW_ROWS,
     },
     formats::delimited::{parse, serialize},
     session::{DocumentSession, ExportOptions, ImportOptions, RowWindow},
@@ -212,7 +212,7 @@ fn identities_and_revision_remain_stable_across_overlapping_windows_and_exports(
 }
 
 #[test]
-fn windows_enforce_positions_row_cell_and_byte_bounds() {
+fn borrowed_windows_enforce_positions_row_and_cell_bounds() {
     let document = parse(b"a\nb\nc\n", ",", false).unwrap();
     assert_eq!(document.window(1, 256).unwrap().len(), 2);
     assert!(document.window(3, 1).unwrap().is_empty());
@@ -227,10 +227,6 @@ fn windows_enforce_positions_row_cell_and_byte_bounds() {
     let document = parse(wide.as_bytes(), ",", false).unwrap();
     assert_eq!(document.window(0, 33).unwrap_err().code(), "WINDOW_LIMIT");
     assert_eq!(document.window(0, 32).unwrap().len(), 32);
-    let large = "x".repeat(MAX_WINDOW_BYTES + 1);
-    let document = parse(large.as_bytes(), ",", false).unwrap();
-    assert_eq!(document.window(0, 1).unwrap_err().code(), "WINDOW_LIMIT");
-    assert_eq!(document.cell(1, 1).unwrap(), &CellValue::Text(large));
 }
 
 #[test]
@@ -321,4 +317,104 @@ fn document_ids_are_unique_across_native_test_threads() {
         .join()
         .unwrap();
     assert_ne!(first.id(), other_id);
+}
+
+#[test]
+fn large_cell_row_identity_can_be_discovered_through_the_session() {
+    // The UTF-8 character straddles the preview boundary; never return half of it.
+    let text = format!(
+        "{}{}",
+        "x".repeat(MAX_CELL_PREVIEW_BYTES - 1),
+        "雪".repeat(700_000)
+    );
+    let session = DocumentSession::new(
+        format!("value\nbefore\n{text}\nafter").into_bytes(),
+        ImportOptions::default(),
+    )
+    .unwrap();
+    let mut request = RowWindow::default();
+    request.offset = 1;
+    request.limit = 1;
+    let window = session.rows(request).unwrap();
+    assert_eq!(window.rows.len(), 1);
+    let preview = &window.rows[0].cells[0];
+    assert!(preview.truncated);
+    assert_eq!(preview.byte_length as usize, text.len());
+    assert_eq!(
+        preview.text.as_deref(),
+        Some("x".repeat(MAX_CELL_PREVIEW_BYTES - 1).as_str())
+    );
+    let row_id = window.rows[0].id;
+    let column_id = session.columns()[0].id;
+    let full = session.read_cell(row_id, column_id).unwrap();
+    assert!(!full.truncated);
+    assert_eq!(full.byte_length as usize, text.len());
+    assert_eq!(full.text.as_deref(), Some(text.as_str()));
+    assert_eq!(session.metadata().revision, window.revision);
+    assert!(!session.metadata().dirty);
+}
+
+#[test]
+fn wide_row_previews_fit_the_total_byte_budget_without_losing_row_ids() {
+    let value = "x".repeat(128);
+    let input = format!("{}\n", vec![value.as_str(); MAX_COLUMNS].join(",")).repeat(32);
+    let mut options = ImportOptions::default();
+    options.headers = Some(false);
+    let session = DocumentSession::new(input.into_bytes(), options).unwrap();
+    let mut request = RowWindow::default();
+    request.limit = 32;
+    let window = session.rows(request).unwrap();
+    assert_eq!(window.rows.len(), 32);
+    let mut bytes = 0;
+    for row in &window.rows {
+        assert_eq!(row.cells.len(), MAX_COLUMNS);
+        for cell in &row.cells {
+            assert!(cell.truncated);
+            assert_eq!(cell.byte_length, 128);
+            bytes += cell.text.as_ref().unwrap().len();
+        }
+    }
+    assert_eq!(bytes, MAX_WINDOW_BYTES);
+    assert_eq!(
+        session
+            .read_cell(window.rows[31].id, session.columns()[511].id)
+            .unwrap()
+            .text
+            .as_deref(),
+        Some(value.as_str())
+    );
+    assert!(session.rows(RowWindow::default()).unwrap().rows.is_empty());
+}
+
+#[test]
+fn previews_distinguish_complete_empty_missing_and_boundary_values() {
+    let exact = "x".repeat(MAX_CELL_PREVIEW_BYTES);
+    let over = "x".repeat(MAX_CELL_PREVIEW_BYTES + 1);
+    let session = DocumentSession::new(
+        format!("empty,exact,over,missing\n,{exact},{over}\n").into_bytes(),
+        ImportOptions::default(),
+    )
+    .unwrap();
+    let mut request = RowWindow::default();
+    request.limit = 1;
+    let window = session.rows(request).unwrap();
+    let cells = &window.rows[0].cells;
+    assert_eq!(cells[0].text.as_deref(), Some(""));
+    assert_eq!((cells[0].truncated, cells[0].byte_length), (false, 0));
+    assert_eq!(cells[1].text.as_deref(), Some(exact.as_str()));
+    assert_eq!(
+        (cells[1].truncated, cells[1].byte_length),
+        (false, MAX_CELL_PREVIEW_BYTES as u32)
+    );
+    assert_eq!(cells[2].text.as_deref(), Some(exact.as_str()));
+    assert_eq!(
+        (cells[2].truncated, cells[2].byte_length),
+        (true, (MAX_CELL_PREVIEW_BYTES + 1) as u32)
+    );
+    assert!(matches!(
+        cells[3].kind,
+        nsh_app_rowtation::session::CellKind::Missing
+    ));
+    assert_eq!(cells[3].text, None);
+    assert_eq!((cells[3].truncated, cells[3].byte_length), (false, 0));
 }

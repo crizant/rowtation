@@ -21,7 +21,7 @@ No JSON-string protocol or separate WASM bridge is used.
 ## Modules and canonical model
 
 - `src/document/`: canonical cells, ordered columns, retained rows, stable identity,
-  counts, revision/dirty metadata and borrowed bounded windows.
+  counts, revision/dirty metadata and borrowed windows limited by row/cell counts.
 - `src/formats/delimited.rs`: UTF-8 import, schema normalization, serialization and
   input/output limits. Uses `csv` 1.4.0 with an in-memory byte slice and byte writer;
   no filesystem, networking or threading APIs are used by the adapters.
@@ -67,8 +67,9 @@ bool) -> Result<Vec<u8>, EngineError>` serializes without changing the document.
 `source_headers`, `revision`, `dirty`, `window(offset, limit)` and
 `cell(row_id, column_id)`. Columns expose ID/name/original name. Rows expose ID and
 stored cells. Dataset mutation and construction from arbitrary external cells are
-not exposed yet. `window` and `cell` borrow storage without cloning. See Rust doc
-comments for exact signatures. The `session` module exposes the NSH transport API
+not exposed yet. `window` and `cell` borrow storage without cloning; text-size caps
+apply only to the session's copied previews. See Rust doc comments for exact
+signatures. The `session` module exposes the NSH transport API
 for Rust callers too; its records implement Default and are non-exhaustive.
 
 ## TSX API contract
@@ -97,16 +98,21 @@ const output = session.serialize({ delimiter: ",", headers: true });
 | `new DocumentSession(input: Uint8Array, options: ImportOptions)` | Atomic import; options `{ delimiter?: string, headers?: boolean }`, defaults comma/true. Failed creation does not affect another session. |
 | `metadata(): DocumentMetadata` | `{ id, rowCount, columnCount, revision, dirty, delimiter, headers }`; no row copies. |
 | `columns(): ColumnMetadata[]` | Ordered `{ id, name, originalName }`; originalName is null for generated columns. |
-| `rows({ offset, limit }): RowsSnapshot` | `{ documentId, revision, offset, rows: [{ id, cells }] }`; cells follow schema order, including missing trailing values. Offset is a position, not an ID. |
-| `readCell(rowId: number, columnId: number): CellSnapshot` | Stable document-scoped IDs. `{ kind, text, boolean, number }`; only the payload for kind is populated, others null. `kind` is `missing`, `null`, `text`, `boolean` or `number`. |
+| `rows({ offset, limit }): RowsSnapshot` | `{ documentId, revision, offset, rows: [{ id, cells }] }`; cells follow schema order, including missing trailing values. Text/number payloads are bounded previews with explicit `truncated` and original `byteLength`. Offset is a position, not an ID. |
+| `readCell(rowId: number, columnId: number): CellSnapshot` | Full value using document-scoped IDs obtained from `rows()`/`columns()`. `{ kind, text, boolean, number, truncated, byteLength }`; `truncated` is always false. Only the payload for kind is populated, others null. `kind` is `missing`, `null`, `text`, `boolean` or `number`. |
 | `serialize(options: ExportOptions): Uint8Array` | Optional delimiter/headers default to source settings. Whole document only; no filtered export or download. |
 | `dispose(): void` | NSH frees the Rust value immediately. Calls after disposal throw TypeError. Garbage collection is a fallback; explicitly dispose when closing/replacing a document. |
 
 A viewport in PR #2 should keep only its requested windows, key rows by stable
-identity, and read changing signals inside JSX/closures. Import UI must keep the
-old session until a new constructor succeeds, then dispose the old one. PR #3
-operations should accept stable IDs and revision expectations rather than JS-owned
-row arrays. These are ownership contracts, not implemented editing methods.
+identity, and read changing signals inside JSX/closures. Render cell payloads as
+previews: when `truncated` is true, the payload is a prefix, never a replacement
+value or an editable draft. Use the row/column IDs to call `readCell()` when the
+full value is needed, including cells larger than the window byte budget. A
+preview's `byteLength` reports the full UTF-8 text/number length (zero for other
+kinds). Prefixes do not include synthetic ellipses; the UI can indicate truncation.
+Import UI must keep the old session until a new constructor succeeds, then dispose
+the old one. PR #3 operations should accept stable IDs and revision expectations
+rather than JS-owned row arrays. These are ownership contracts, not implemented editing methods.
 
 ## CSV/TSV and serialization policies
 
@@ -150,12 +156,20 @@ input path uses unsafe code, unwrap or expect.
 | Stored fields, excluding implicit Missing | 1,000,000 |
 | Rows per window | 256 |
 | Logical cells per window | 16,384 |
-| Text bytes per window | 1 MiB |
+| Preview text bytes per session window | 1 MiB |
+| UTF-8 bytes per cell preview | At most 256, reduced for wide windows |
 | Serialized bytes | 32 MiB |
 
 End-of-document windows contain the remaining rows; offset equal to rowCount and
-zero limits are valid empty windows. Larger offsets or requests above limits fail;
-request smaller windows after WINDOW_LIMIT. A single large cell can be read by ID.
+zero limits are valid empty windows. Larger offsets or requests above row/cell
+limits fail; request fewer rows after WINDOW_LIMIT. Borrowed Rust windows never
+copy text and have no text-size rejection. For session copies, divide the 1 MiB
+budget equally across all logical cells in the returned window, capped at 256
+bytes per cell, then shorten each text/number prefix at a valid UTF-8 character
+boundary. This guarantees the payload budget while keeping every requested row's
+identity available, even if a single cell exceeds 1 MiB. `truncated` marks every
+shortened payload explicitly; storage, `readCell()` and serialization retain the
+full values. `readCell()` can transfer a whole large cell on explicit request.
 NSH copies input bytes once into Rust and copies returned snapshots/bytes across
 the bridge. The engine retains decoded fields, not the original file or a dataset
 clone. Only requested windows are copied; no cache or worker architecture is added.
@@ -167,9 +181,12 @@ its heap. Multiple sessions can coexist; per-session caps are not a global quota
 
 Rust tests cover parsing, invalid syntax/encoding, headers, empty/missing values,
 leading zeros, Unicode, round trips, identity, windows, lifecycle and resource
-limits. The NSH smoke tests cover typed results/arguments, failed constructors,
-serialization, and explicit disposal, with a test-only app entry to exercise the
-actual browser/WASM bridge. The production screen stays a placeholder.
+limits, including large-cell discoverability, UTF-8 preview boundaries and the
+aggregate preview byte budget. The NSH smoke tests cover typed results/arguments,
+failed constructors, serialization, and explicit disposal, with a test-only app
+entry to exercise the actual browser/WASM bridge, including a 2 MiB cell preview followed by its full
+stable-ID read. A separate production smoke test opens `App.tsx` and checks the
+Rowtation title. The production screen stays a placeholder.
 
 Verify `cargo fmt --check`, `nsh check`, `nsh build`, `nsh test`,
 `nsh test --target web` and `nsh package --target web -o dist` for changes. A web
