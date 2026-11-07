@@ -1,0 +1,7 @@
+{
+  "name": "Rowtation",
+  "id": "io.github.crizant.rowtation",
+  "version": "1.0.0",
+  "build": 1,
+  "rust": "."
+}
