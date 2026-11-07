@@ -1,18 +1,27 @@
 # Import and inspection validation
 
-The captures use synthetic orders from tests/data/orders.csv, pasted into the real
-production entry in Chromium. They contain no user documents. Regenerate them
-with scripts/capture-layouts.sh; set ROWTATION_BROWSER when Chromium is outside
-NSH's default search paths.
+## Generate and inspect screenshots locally
 
-| Desktop | Mobile |
-| --- | --- |
-| ![Desktop home](screenshots/desktop-home.png) | ![Mobile home](screenshots/mobile-home.png) |
-| ![Centered import review](screenshots/desktop-import.png) | ![Mobile import panel](screenshots/mobile-import.png) |
-| ![Desktop inspection](screenshots/desktop-document.png) | ![Mobile inspection](screenshots/mobile-document.png) |
-| ![Scrolled desktop inspector](screenshots/desktop-inspector-scrolled.png) | ![Contextual column information](screenshots/mobile-inspector.png) |
+Run from the repository root with NSH 0.4.0 and Chromium installed:
 
-![Dark appearance](screenshots/desktop-home-dark.png)
+```sh
+scripts/capture-layouts.sh
+# When Chromium is outside NSH's default search paths:
+ROWTATION_BROWSER=/path/to/chromium scripts/capture-layouts.sh
+```
+
+The script uses `tests/capture-layouts.steps.js` to capture the production entry
+with synthetic orders from `tests/data/orders.csv`. Generated PNGs are written
+to `docs/screenshots/`, which is ignored by Git. Captures are local verification
+artifacts; do not commit them or use repository image links in PR descriptions.
+
+Open the generated PNGs in an image viewer. Inspect desktop and mobile import,
+the data grid, the contextual inspector, the scrolled desktop sidebar, and dark
+appearance. Check centered desktop dialogs, mobile safe-area spacing, readable
+selection, one horizontal grid scrollbar, and content clipping inside the
+stationary inspector frame. Re-run after visible changes; automated workflow
+tests alone do not establish visual correctness. Delete the local output when
+it is no longer needed.
 
 ## Focused workflow checks
 
@@ -32,9 +41,10 @@ browser input and Rust/WASM, independently from the native headless checks.
 
 `scripts/test-browser-files.sh` adds browser File/FileList/DragEvent coverage:
 file picker selection, a valid TSV drop, malformed CSV, unsupported extension,
-multiple-file rejection, preservation/replacement and closing/reopening a
-session. It uses synthetic File objects to supply a picker selection instead
-of driving the operating system's chooser. The fixture host supplies file
+multiple-file rejection, invalid UTF-8 after a valid draft, cancellation and
+newer workflows during delayed reads, preservation/replacement, and session
+closing/reopening. It uses synthetic File objects to supply a picker selection
+instead of driving the operating system's chooser. The fixture host supplies file
 selections/drops only; it contains no layout observer or product test controls.
 The script restores nsh.json after its temporary test-host configuration,
 including on failure. Run NSH commands serially; 0.4's generated runtime paths

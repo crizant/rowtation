@@ -21,8 +21,8 @@ Data stays local. There is no backend, upload, telemetry, persistent storage or
 session history. Closing a document releases its Rust session. Import failures
 preserve the active document; a successful replacement releases the old session.
 
-See [UI captures](docs/ui-validation.md) for desktop and mobile screenshots and
-repeatable browser validation commands.
+See [UI validation instructions](docs/ui-validation.md) for local desktop/mobile
+screenshot generation, visual inspection guidance, and browser validation commands.
 
 ## Document engine
 

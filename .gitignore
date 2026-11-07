@@ -1,3 +1,6 @@
 .nsh/
 target/
 dist/
+
+# Generated local visual-verification captures
+/docs/screenshots/
