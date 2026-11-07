@@ -1,7 +1,7 @@
 //! NSH transport records contain only requested snapshots; the session owns Rust data.
 use crate::inspection::{ColumnProfile, FrequentValue};
 use crate::{
-    document::{CellValue, Document, MAX_CELL_PREVIEW_BYTES, MAX_WINDOW_BYTES},
+    document::{CellValue, Document},
     error::EngineError,
     formats::delimited,
 };
@@ -86,38 +86,31 @@ pub enum CellKind {
     Number,
 }
 
-/// A copied cell snapshot. Row windows may contain flagged UTF-8 prefixes;
-/// readCell always returns the full value. Only the payload for kind has a value.
+/// A copied cell snapshot with the full value. Only the payload for kind has a value.
 #[derive(JsObject, Default)]
 #[non_exhaustive]
 pub struct CellSnapshot {
     /// Discriminates missing, null, text, boolean and number.
     pub kind: CellKind,
-    /// Literal text or a flagged preview prefix for text cells; null otherwise.
+    /// Literal text for text cells; null otherwise.
     pub text: Option<String>,
     /// Boolean payload, or null.
     pub boolean: Option<bool>,
-    /// Exact numeric lexical form or a flagged preview prefix; null otherwise.
+    /// Exact numeric lexical form; null otherwise.
     pub number: Option<String>,
-    /// True when the payload is a preview prefix; readCell retrieves the full value.
-    pub truncated: bool,
-    /// Full UTF-8 payload length before previewing; zero for non-text/non-number cells.
+    /// UTF-8 payload length; zero for non-text/non-number cells.
     pub byte_length: u32,
 }
 impl From<&CellValue> for CellSnapshot {
     fn from(value: &CellValue) -> Self {
-        Self::with_text_limit(value, usize::MAX)
-    }
-}
-impl CellSnapshot {
-    fn with_text_limit(value: &CellValue, limit: usize) -> Self {
         let mut cell = Self::default();
         match value {
             CellValue::Missing => (),
             CellValue::Null => cell.kind = CellKind::Null,
             CellValue::Text(text) => {
                 cell.kind = CellKind::Text;
-                cell.text = Some(cell.text_prefix(text, limit));
+                cell.byte_length = saturating_u32(text.len());
+                cell.text = Some(text.clone());
             }
             CellValue::Boolean(value) => {
                 cell.kind = CellKind::Boolean;
@@ -125,21 +118,16 @@ impl CellSnapshot {
             }
             CellValue::Number(text) => {
                 cell.kind = CellKind::Number;
-                cell.number = Some(cell.text_prefix(text, limit));
+                cell.byte_length = saturating_u32(text.len());
+                cell.number = Some(text.clone());
             }
         }
         cell
     }
+}
 
-    fn text_prefix(&mut self, text: &str, limit: usize) -> String {
-        let mut end = limit.min(text.len());
-        while !text.is_char_boundary(end) {
-            end -= 1;
-        }
-        self.byte_length = text.len() as u32;
-        self.truncated = end < text.len();
-        text[..end].to_owned()
-    }
+pub(crate) fn saturating_u32(value: usize) -> u32 {
+    u32::try_from(value).unwrap_or(u32::MAX)
 }
 
 /// One row of a requested window, with cells in the returned schema order.
@@ -148,8 +136,7 @@ impl CellSnapshot {
 pub struct RowSnapshot {
     /// Stable document-scoped identity; use with readCell, never a display index.
     pub id: u32,
-    /// Cell previews in schema order, including implicit missing fields. Check
-    /// truncated before treating a text/number payload as the full value.
+    /// Full cell values in schema order, including implicit missing fields.
     pub cells: Vec<CellSnapshot>,
 }
 
@@ -204,7 +191,7 @@ impl DocumentSession {
         }
     }
 
-    /// Retrieve ordered schema only, at most 512 columns.
+    /// Retrieve the ordered schema.
     pub fn columns(&self) -> Vec<ColumnMetadata> {
         self.document
             .columns()
@@ -217,17 +204,13 @@ impl DocumentSession {
             .collect()
     }
 
-    /// Retrieve row identities and cell previews: at most 256 rows, 16,384 logical
-    /// cells and 1 MiB of text. Text/number previews are UTF-8 prefixes of at most
-    /// 256 bytes, reduced equally for wide windows to fit the total byte budget.
-    /// Each cell reports truncated and byteLength; readCell returns the full value.
-    /// Oversized row/cell counts throw INVALID_WINDOW or WINDOW_LIMIT.
+    /// Retrieve row identities and full cell values for at most 256 rows. Every
+    /// column and the whole text of each value are copied; there is no byte budget.
+    /// An offset past rowCount or a limit above 256 throws INVALID_WINDOW.
     pub fn rows(&self, window: RowWindow) -> Result<RowsSnapshot, EngineError> {
         let rows = self
             .document
             .window(window.offset as usize, window.limit as usize)?;
-        let cell_count = rows.len() * self.document.column_count();
-        let preview_bytes = MAX_CELL_PREVIEW_BYTES.min(MAX_WINDOW_BYTES / cell_count.max(1));
         Ok(RowsSnapshot {
             document_id: self.document.id().into(),
             revision: self.document.revision(),
@@ -237,20 +220,14 @@ impl DocumentSession {
                 .map(|r| RowSnapshot {
                     id: r.id(),
                     cells: (0..self.document.column_count())
-                        .map(|i| {
-                            CellSnapshot::with_text_limit(
-                                r.cells().get(i).unwrap_or(&CellValue::Missing),
-                                preview_bytes,
-                            )
-                        })
+                        .map(|i| r.cells().get(i).unwrap_or(&CellValue::Missing).into())
                         .collect(),
                 })
                 .collect(),
         })
     }
 
-    /// Read the full cell by stable IDs discovered through rows and columns.
-    /// Always reports truncated false, including for values over the window budget.
+    /// Read one cell by stable IDs discovered through rows and columns.
     /// Unknown IDs throw UNKNOWN_ROW or UNKNOWN_COLUMN; absent fields are missing.
     pub fn read_cell(&self, row_id: u32, column_id: u32) -> Result<CellSnapshot, EngineError> {
         Ok(self.document.cell(row_id, column_id)?.into())
@@ -301,16 +278,9 @@ impl DocumentSession {
         top.sort_unstable_by(order);
         profile.common_values = top
             .into_iter()
-            .map(|(value, count)| {
-                let mut end = value.len().min(MAX_CELL_PREVIEW_BYTES);
-                while !value.is_char_boundary(end) {
-                    end -= 1;
-                }
-                FrequentValue {
-                    value: value[..end].into(),
-                    count,
-                    truncated: end < value.len(),
-                }
+            .map(|(value, count)| FrequentValue {
+                value: value.into(),
+                count,
             })
             .collect();
         if self.profiles.len() == 8 {

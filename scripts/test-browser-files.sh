@@ -23,7 +23,7 @@ fi
 nsh test App.tsx --target web "$@" <<'STEPS'
 await app.setViewport(1280, 800);
 await app.press("Choose file…");
-await app.waitFor("picked.csv");
+await app.waitFor("Import “picked.csv”");
 await app.press("Import document");
 await app.waitFor("2 rows · 7 columns");
 if (!app.texts().includes("00123")) throw new Error("Picker lost literal text");
@@ -33,20 +33,20 @@ if (!app.texts().includes("picked.csv")) throw new Error("Multiple drop replaced
 await app.keyboard.press("F7");
 await app.waitFor("unsupported.json: Choose a .csv or .tsv file. Other formats are not supported yet.");
 await app.keyboard.press("F10");
-await app.waitFor("broken.csv");
+await app.waitFor("Import “broken.csv”");
 await app.press("Import document");
 await app.waitFor("Check the separator and quoted fields, or choose another file. Your current document is unchanged.");
 await app.press("Cancel");
 if (!app.texts().includes("picked.csv")) throw new Error("Invalid drop replaced document");
 await app.keyboard.press("F8");
-await app.waitFor("dropped.tsv");
+await app.waitFor("Import “dropped.tsv”");
 await app.press("Import document");
 await app.waitFor("1 row · 2 columns");
 if (!app.texts().includes("Hana") || app.texts().includes("00123")) throw new Error("Drop did not replace document");
 await app.press("close-document");
 await app.waitFor("Rowtation");
 await app.press("Choose file…");
-await app.waitFor("picked.csv");
+await app.waitFor("Import “picked.csv”");
 await app.press("Import document");
 await app.waitFor("2 rows · 7 columns");
 
@@ -55,9 +55,9 @@ for (const [key, message] of [
   ["F7", "unsupported.json: Choose a .csv or .tsv file. Other formats are not supported yet."],
   ["F4", "invalid-utf8.csv: INVALID_UTF8: Save the file as UTF-8 CSV or TSV and try again."],
 ]) {
-  await app.press("Import");
+  await app.press("Import…");
   await app.press("Choose another file…");
-  await app.waitFor("picked.csv");
+  await app.waitFor("Import “picked.csv”");
   await app.keyboard.press(key);
   await app.waitFor(message);
   if (app.shows("app-dialog") || !app.texts().includes("00123")) throw new Error("Rejected file retained an importable draft or replaced the open document");
@@ -68,7 +68,7 @@ async function releaseRead() {
   await app.keyboard.press("F3");
   await app.wait(50);
 }
-await app.press("Import");
+await app.press("Import…");
 await app.keyboard.press("F2");
 await app.press("Cancel");
 await releaseRead();
@@ -76,9 +76,9 @@ if (app.shows("app-dialog") || !app.texts().includes("00123")) throw new Error("
 
 await app.keyboard.press("F2");
 await app.keyboard.press("F8");
-await app.waitFor("dropped.tsv");
+await app.waitFor("Import “dropped.tsv”");
 await releaseRead();
-if (app.texts().includes("delayed.csv")) throw new Error("Older read replaced the newer file draft");
+if (app.texts().includes("Import “delayed.csv”")) throw new Error("Older read replaced the newer file draft");
 await app.press("Import document");
 await app.waitFor("1 row · 2 columns");
 

@@ -6,7 +6,7 @@ use nsh_core::prelude::*;
 pub struct LocalImport {
     /// Local display name, treated as text.
     pub name: String,
-    /// File bytes, capped at 8 MiB before reading.
+    /// File bytes, of any size the browser can read.
     pub bytes: Vec<u8>,
     /// Read generation, checked again when a queued callback reaches the UI.
     pub request_id: Option<String>,
@@ -109,14 +109,12 @@ mod browser {
         if !(lower.ends_with(".csv") || lower.ends_with(".tsv")) {
             result.error =
                 Some("Choose a .csv or .tsv file. Other formats are not supported yet.".into());
-        } else if file.size() > crate::document::MAX_INPUT_BYTES as f64 {
-            result.error = Some("Choose a file of 8 MiB or less.".into());
         } else {
             match JsFuture::from(file.array_buffer()).await {
                 Ok(buffer) => result.bytes = js_sys::Uint8Array::new(&buffer).to_vec(),
                 Err(_) => {
                     result.error = Some(
-                        "The file could not be read. Select it again or paste its text.".into(),
+                        "The browser could not read the file. It may be too large for this tab's memory, or it changed after selection.".into(),
                     )
                 }
             }

@@ -1,15 +1,10 @@
-//! UTF-8 CSV/TSV adapters, with explicit preservation and resource policies.
+//! UTF-8 CSV/TSV adapters, with explicit preservation policies. Size is not
+//! capped here; the import review warns about large input before parsing.
 use super::records::Records;
 use crate::{
-    document::{
-        CellValue, Column, Document, MAX_CELLS, MAX_COLUMNS, MAX_INPUT_BYTES, MAX_ROWS, Row,
-    },
+    document::{CellValue, Column, Document, Row},
     error::EngineError,
 };
-use std::io::{self, Write};
-
-/// Maximum serialized output; exceeding it returns an error, never partial bytes.
-pub const MAX_OUTPUT_BYTES: usize = 32 * 1024 * 1024;
 
 pub(crate) fn delimiter(value: &str) -> Result<u8, EngineError> {
     match value.as_bytes() {
@@ -25,12 +20,6 @@ pub(crate) fn delimiter(value: &str) -> Result<u8, EngineError> {
 /// trimming or scalar coercion. Ragged rows grow the schema and retain absences.
 pub fn parse(input: &[u8], separator: &str, headers: bool) -> Result<Document, EngineError> {
     let delimiter = delimiter(separator)?;
-    if input.len() > MAX_INPUT_BYTES {
-        return Err(EngineError::new(
-            "INPUT_LIMIT",
-            format!("Input exceeds {MAX_INPUT_BYTES} bytes."),
-        ));
-    }
     let original = input;
     let input = input.strip_prefix(&[0xef, 0xbb, 0xbf]).unwrap_or(input);
     std::str::from_utf8(input).map_err(|e| {
@@ -50,7 +39,6 @@ pub fn parse(input: &[u8], separator: &str, headers: bool) -> Result<Document, E
     let mut record = csv::StringRecord::new();
     let mut columns = Vec::new();
     let mut rows = Vec::new();
-    let mut cells = 0;
     for scanned in Records::new(input, delimiter) {
         let (blank, line, number) = scanned?;
         record.clear();
@@ -65,13 +53,6 @@ pub fn parse(input: &[u8], separator: &str, headers: bool) -> Result<Document, E
                     .at(line, number),
             );
         }
-        if record.len() > MAX_COLUMNS {
-            return Err(EngineError::new(
-                "COLUMN_LIMIT",
-                format!("Record exceeds {MAX_COLUMNS} columns."),
-            )
-            .at(line, number));
-        }
         if headers && number == 1 {
             columns = record
                 .iter()
@@ -83,14 +64,6 @@ pub fn parse(input: &[u8], separator: &str, headers: bool) -> Result<Document, E
                 })
                 .collect();
             continue;
-        }
-        cells += record.len();
-        if rows.len() == MAX_ROWS || cells > MAX_CELLS {
-            return Err(EngineError::new(
-                "DATA_LIMIT",
-                format!("Document exceeds {MAX_ROWS} rows or {MAX_CELLS} stored cells."),
-            )
-            .at(line, number));
         }
         while columns.len() < record.len() {
             let id = columns.len() as u32 + 1;
@@ -106,22 +79,6 @@ pub fn parse(input: &[u8], separator: &str, headers: bool) -> Result<Document, E
         });
     }
     Document::new(columns, rows, delimiter, headers)
-}
-
-struct BoundedOutput(Vec<u8>);
-impl Write for BoundedOutput {
-    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
-        if bytes.len() > MAX_OUTPUT_BYTES.saturating_sub(self.0.len()) {
-            return Err(io::Error::other(
-                "OUTPUT_LIMIT: serialized output exceeds the byte limit.",
-            ));
-        }
-        self.0.extend_from_slice(bytes);
-        Ok(bytes.len())
-    }
-    fn flush(&mut self) -> io::Result<()> {
-        Ok(())
-    }
 }
 
 /// Serialize text with standard quoting and LF records. Trailing Missing fields
@@ -155,7 +112,7 @@ pub fn serialize(
         .delimiter(delimiter)
         .quote_style(quote_style)
         .flexible(true)
-        .from_writer(BoundedOutput(Vec::new()));
+        .from_writer(Vec::new());
     let write_error = |e: csv::Error| EngineError::new("SERIALIZE_FAILED", e.to_string());
     if headers && !document.columns.is_empty() {
         writer
@@ -176,7 +133,6 @@ pub fn serialize(
     }
     writer
         .into_inner()
-        .map(|output| output.0)
         .map_err(|e| EngineError::new("SERIALIZE_FAILED", e.to_string()))
 }
 
@@ -202,14 +158,5 @@ mod tests {
         let mut document = parse(b"a,b\nx,y", ",", true).unwrap();
         document.rows[0].cells[1] = CellValue::Missing;
         assert_eq!(serialize(&document, ",", true).unwrap(), b"a,b\nx\n");
-    }
-
-    #[test]
-    fn output_sink_refuses_overflow_without_returning_partial_bytes() {
-        let mut output = BoundedOutput(vec![0; MAX_OUTPUT_BYTES - 1]);
-        assert!(output.write_all(b"xx").is_err());
-        assert_eq!(output.0.len(), MAX_OUTPUT_BYTES - 1);
-        output.write_all(b"x").unwrap();
-        assert!(output.write_all(b"x").is_err());
     }
 }

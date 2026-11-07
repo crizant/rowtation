@@ -48,15 +48,13 @@ fail with `LOSSY_EXPORT`. Generated column names are included when headers are
 requested. Spreadsheet formula protection/downloads belong to a later export UI;
 this internal serializer emits literal text unchanged.
 
-Limits reject excessive input without truncation: 8 MiB input, 100,000 data rows,
-512 columns, 1,000,000 stored fields, and 32 MiB serialized output. Row windows are
-limited to 256 rows, 16,384 logical cells and 1 MiB of preview text. Each cell
-preview contains at most 256 UTF-8 bytes (less for wide windows), with explicit
-`truncated` and original `byteLength` metadata. Row IDs remain available even for
-large cells; `readCell()` returns their full values on demand. Stored data and
-serialization are never shortened by previews. These are conservative
-resource guards, not measured large-file performance guarantees. Parsing remains
-synchronous on the browser thread.
+There are no size caps on input, rows, columns, stored fields, value length or
+serialized output; the practical ceiling is the browser tab's memory and WASM's
+4 GiB address space. Row windows return at most 256 rows, with every column and
+whole values. Before importing, the review step measures the whole input in Rust
+and asks for confirmation ("Import anyway") above 8 MiB, 100,000 records, 512
+columns, 1,000,000 fields or a 1 MiB field. These thresholds are advisory, not
+measured performance limits. Parsing remains synchronous on the browser thread.
 
 See [architecture and API contracts](docs/architecture.md) for Rust/TSX usage,
 identity, error and disposal rules.
@@ -151,12 +149,12 @@ It is for the Pages Linux image; local macOS builds use the commands above.
 ```text
 App.tsx                Responsive import and inspection screens, TSX entry
 App.test.tsx           NSH bridge and app-runtime smoke tests
-components/            Styled controls, bounded DataGrid and Inspector
+components/            Styled controls, DataGrid and Inspector
 src/lib.rs             Rust API registered as rowtation/native
-src/document/          Canonical values, identities and bounded storage access
+src/document/          Canonical values, identities and storage access
 src/formats/           CSV/TSV parser, validation and serializer
-src/session.rs         Retained NSH session, bounded windows and profile cache
-src/inspection.rs      Rust delimiter suggestions and profile transport records
+src/session.rs         Retained NSH session, row windows and profile cache
+src/inspection.rs      Rust delimiter suggestions, size measurement and profile records
 src/browser_import.rs Browser file input/drop adapter through registered NSH API
 src/browser_styles.rs Scoped browser presentation styles through registered API
 src/error.rs           Recoverable engine errors

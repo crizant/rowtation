@@ -14,7 +14,7 @@ architecture for the implemented value, header, delimiter and resource policies.
 - Rust delimiter suggestion, explicit header/separator review, actionable parsing
   errors, loading and empty states, atomic document replacement.
 - Virtualized two-axis table with row numbers, sticky headers, cell selection and
-  keyboard navigation. Values remain literal text, with bounded previews.
+  keyboard navigation. Values remain literal text and are shown in full.
 - Desktop column inspector and narrow-browser contextual panel: exact unique,
   empty and missing counts, five common values, source settings and selection.
 - In-memory active document only. No history or persistence; closing/replacing it
@@ -61,8 +61,9 @@ architecture for the implemented value, header, delimiter and resource policies.
   or HTML. Treat imported contents as data.
 - Handle formula-like spreadsheet text explicitly on export. A safe text mode
   must explain any escaping that changes output values.
-- Establish tested size and row limits on representative browsers before claiming
-  large-file support. Report exceeded limits clearly.
+- Imports have no size caps. Large input (above 8 MiB, 100,000 records, 512
+  columns, 1,000,000 fields or a 1 MiB field) requires explicit confirmation.
+  Measure representative browsers before claiming large-file support.
 
 ## Decisions needed during implementation
 

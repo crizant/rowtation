@@ -22,14 +22,14 @@ test("failed import preserves the document and successful import replaces it", a
   await app.press("Review import");
   await app.press("Import document");
   await app.waitFor("1 row · 1 column");
-  await app.press("Import");
+  await app.press("Import…");
   await app.paste("paste-input", { text: '\n"unclosed' });
   await app.press("Review import");
   await app.press("Import document");
   await app.waitFor("text:Check the separator and quoted fields, or choose another file. Your current document is unchanged.");
   await app.press("Cancel");
   expect(app.texts()).toContain("Original");
-  await app.press("Import");
+  await app.press("Import…");
   await app.clear("paste-input");
   await app.paste("paste-input", { text: "name\nReplacement" });
   await app.press("Review import");
@@ -43,7 +43,7 @@ test("mobile TSV import without headers and contextual inspector", async () => {
   await app.press("Paste from clipboard");
   await app.paste("paste-input", { text: "001\tMia\n002\tOliver" });
   await app.press("Review import");
-  expect(app.texts()).toContain("✓ TSV · Tab");
+  expect(app.texts()).toContain("Tab");
   await app.press("First row contains column headers");
   await app.press("Import document");
   await app.waitFor("2 rows · 2 columns");
@@ -101,4 +101,28 @@ test("wide tables split tall viewport reads to respect Rust cell-window limits",
   for (let column = 0; column < 9; column++) await app.keyboard.press("arrowright");
   await app.waitFor("Field 9");
   expect(app.texts()).toContain("r59c9");
+});
+
+test("large data imports only after an explicit confirmation", async () => {
+  const text = "id\n" + Array.from({ length: 100_001 }, (_, i) => String(i + 1)).join("\n");
+  const app = await open("./App.tsx", { width: 1280, height: 800, clipboard: text });
+  await app.press("Paste from clipboard");
+  await app.press("Review import");
+  await app.waitFor("This is a large dataset");
+  expect(app.texts().join("\n")).toContain("100,001 rows · 1 column");
+  expect(app.texts()).not.toContain("Import document");
+  await app.press("Cancel");
+  expect(app.texts()).toContain("Rowtation");
+  await app.press("Paste from clipboard");
+  await app.press("Review import");
+  await app.press("Import anyway");
+  await app.waitFor("100,001 rows · 1 column");
+});
+
+test("small data imports without a warning", async () => {
+  const app = await open("./App.tsx", { clipboard: "id\n1" });
+  await app.press("Paste from clipboard");
+  await app.press("Review import");
+  expect(app.texts()).not.toContain("This is a large dataset");
+  expect(app.texts()).toContain("Import document");
 });

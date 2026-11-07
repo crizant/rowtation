@@ -17,7 +17,7 @@ its formats or operations as supported in the README.
 6. **Excel:** WASM-compatible readers/writers, worksheet selection, dates,
    precision and formulas. Ship `.xlsx` first; evaluate legacy `.xls` input.
 7. **Export and release:** options, scope, loss preview and downloads; browser
-   round trips, resource limits, accessibility and deployment smoke tests.
+   round trips, large-input measurements, accessibility and deployment smoke tests.
 
 Import and inspection retain only the active in-memory document; session history
 and persistent document storage are outside this milestone.
