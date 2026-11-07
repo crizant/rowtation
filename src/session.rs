@@ -1,10 +1,12 @@
 //! NSH transport records contain only requested snapshots; the session owns Rust data.
+use crate::inspection::{ColumnProfile, FrequentValue};
 use crate::{
     document::{CellValue, Document, MAX_CELL_PREVIEW_BYTES, MAX_WINDOW_BYTES},
     error::EngineError,
     formats::delimited,
 };
 use nsh_core::prelude::*;
+use std::collections::{HashMap, VecDeque};
 
 /// Explicit CSV/TSV import options. CSV with a header is the default.
 #[derive(JsObject, Default)]
@@ -171,6 +173,7 @@ pub struct RowsSnapshot {
 #[class]
 pub struct DocumentSession {
     document: Document,
+    profiles: VecDeque<ColumnProfile>,
 }
 
 #[class]
@@ -179,6 +182,7 @@ impl DocumentSession {
     /// leaves any existing session intact. Defaults: comma delimiter, headers true.
     pub fn new(input: Vec<u8>, options: ImportOptions) -> Result<Self, EngineError> {
         Ok(Self {
+            profiles: VecDeque::new(),
             document: delimited::parse(
                 &input,
                 options.delimiter.as_deref().unwrap_or(","),
@@ -250,6 +254,70 @@ impl DocumentSession {
     /// Unknown IDs throw UNKNOWN_ROW or UNKNOWN_COLUMN; absent fields are missing.
     pub fn read_cell(&self, row_id: u32, column_id: u32) -> Result<CellSnapshot, EngineError> {
         Ok(self.document.cell(row_id, column_id)?.into())
+    }
+
+    /// Exact column statistics, computed once per cached column. Keeps at most eight
+    /// small summaries; frequency maps borrow Rust text and are freed after profiling.
+    pub fn profile(&mut self, column_id: u32) -> Result<ColumnProfile, EngineError> {
+        if let Some(profile) = self.profiles.iter().find(|p| p.column_id == column_id) {
+            return Ok(profile.clone());
+        }
+        let index = self
+            .document
+            .columns()
+            .iter()
+            .position(|c| c.id() == column_id)
+            .ok_or_else(|| {
+                EngineError::new("UNKNOWN_COLUMN", "Select a column in this document.")
+            })?;
+        let mut counts: HashMap<&str, u32> = HashMap::new();
+        let mut profile = ColumnProfile {
+            column_id,
+            kind: "Text".into(),
+            ..Default::default()
+        };
+        for row in &self.document.rows {
+            match row.cells().get(index) {
+                Some(CellValue::Text(value)) => {
+                    *counts.entry(value.as_str()).or_default() += 1;
+                    if value.is_empty() {
+                        profile.empty_count += 1;
+                    }
+                }
+                _ => profile.missing_count += 1,
+            }
+        }
+        profile.unique_count = counts.len() as u32;
+        let mut top: Vec<_> = counts
+            .into_iter()
+            .filter(|(value, _)| !value.is_empty())
+            .collect();
+        // Only five entries are needed, so avoid sorting the whole distinct-value set.
+        let order = |a: &(&str, u32), b: &(&str, u32)| b.1.cmp(&a.1).then_with(|| a.0.cmp(b.0));
+        if top.len() > 5 {
+            top.select_nth_unstable_by(5, order);
+            top.truncate(5);
+        }
+        top.sort_unstable_by(order);
+        profile.common_values = top
+            .into_iter()
+            .map(|(value, count)| {
+                let mut end = value.len().min(MAX_CELL_PREVIEW_BYTES);
+                while !value.is_char_boundary(end) {
+                    end -= 1;
+                }
+                FrequentValue {
+                    value: value[..end].into(),
+                    count,
+                    truncated: end < value.len(),
+                }
+            })
+            .collect();
+        if self.profiles.len() == 8 {
+            self.profiles.pop_front();
+        }
+        self.profiles.push_back(profile.clone());
+        Ok(profile)
     }
 
     /// Serialize the whole document to UTF-8 bytes (Uint8Array). This is an internal

@@ -98,10 +98,31 @@ jobs:
             .nsh/rust
           # New sources save a new snapshot; restore the latest compatible build
           # when sources or the lockfile change. Keep suites and compilers isolated.
-          key: rust-web-v2-${{ runner.os }}-${{ runner.arch }}-${{ matrix.suite }}-${{ env.NSH_VERSION }}-${{ steps.toolchain.outputs.rust }}-${{ hashFiles('Cargo.lock', 'Cargo.toml') }}-${{ hashFiles('**/*.rs', '**/*.tsx', '**/*.ts', 'nsh.json', 'tsconfig.json', '.github/workflows/ci.yml', '!.nsh/**', '!target/**') }}
+          key: rust-web-v2-${{ runner.os }}-${{ runner.arch }}-${{ matrix.suite }}-${{ env.NSH_VERSION }}-${{ steps.toolchain.outputs.rust }}-${{ hashFiles('Cargo.lock', 'Cargo.toml') }}-${{ hashFiles('**/*.rs', '**/*.tsx', '**/*.ts', '**/*.js', '**/*.sh', 'nsh.json', 'tsconfig.json', '.github/workflows/ci.yml', '!.nsh/**', '!target/**') }}
           restore-keys: |
             rust-web-v2-${{ runner.os }}-${{ runner.arch }}-${{ matrix.suite }}-${{ env.NSH_VERSION }}-${{ steps.toolchain.outputs.rust }}-${{ hashFiles('Cargo.lock', 'Cargo.toml') }}-
             rust-web-v2-${{ runner.os }}-${{ runner.arch }}-${{ matrix.suite }}-${{ env.NSH_VERSION }}-${{ steps.toolchain.outputs.rust }}-
+
+      - name: Resolve wasm-bindgen CLI version
+        if: matrix.suite == 'browser'
+        id: bindgen
+        run: |
+          version=$(python3 -c 'import tomllib; lock=tomllib.load(open("Cargo.lock", "rb")); print(next(p["version"] for p in lock["package"] if p["name"] == "wasm-bindgen"))')
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Restore wasm-bindgen CLI
+        if: matrix.suite == 'browser'
+        id: bindgen-cache
+        uses: actions/cache@v6
+        with:
+          path: ~/.cargo/bin/wasm-bindgen
+          key: wasm-bindgen-cli-${{ runner.os }}-${{ runner.arch }}-${{ steps.bindgen.outputs.version }}
+
+      - name: Install matching wasm-bindgen CLI
+        if: matrix.suite == 'browser' && steps.bindgen-cache.outputs.cache-hit != 'true'
+        env:
+          BINDGEN_VERSION: ${{ steps.bindgen.outputs.version }}
+        run: cargo install wasm-bindgen-cli --version "$BINDGEN_VERSION" --locked
 
       - name: Check Rust and TSX types
         if: matrix.suite == 'checks'
@@ -118,6 +139,16 @@ jobs:
       - name: Run browser and WASM integration tests
         if: matrix.suite == 'browser'
         run: nsh test --target web --browser /usr/bin/google-chrome
+
+      - name: Run local file workflows
+        if: matrix.suite == 'browser'
+        env:
+          ROWTATION_BROWSER: /usr/bin/google-chrome
+        run: scripts/test-browser-files.sh
+
+      - name: Package the web application
+        if: matrix.suite == 'browser'
+        run: nsh package --target web -o dist
 
       - name: Record cache results
         env:

@@ -16,11 +16,13 @@ nsh check
 nsh build
 nsh test
 nsh test --target web
+scripts/test-browser-files.sh
 nsh package --target web -o dist
 ```
 
 Test meaningful data behavior and malformed input in Rust with synthetic
-fixtures. Add UI tests for complete workflows when implemented. Inspect visible
+fixtures. Keep UI tests focused on meaningful workflows; avoid copying parser
+assertions into browser tests or adding a matrix of cosmetic layout assertions. Inspect visible
 changes in a real browser; behavior tests do not prove layout. Report unavailable
 verification and its reason.
 
@@ -39,7 +41,8 @@ requests targeting `main`, pushes to `main`, and manual workflow runs:
 - `Rust formatting`: `cargo fmt --check`, with only Rust and rustfmt setup.
 - `Static checks and headless tests`: `nsh check`, `nsh build`, then `nsh test`,
   sharing compilation within the job.
-- `Browser and WASM integration`: `nsh test --target web` using installed Chrome.
+- `Browser and WASM integration`: `nsh test --target web`, local file workflow checks, then `nsh package --target web -o dist`, using installed Chrome.
+  This job installs/caches the wasm-bindgen CLI matching Cargo.lock.
 
 The two NSH jobs share a matrix definition with fail-fast disabled, so a failure
 in one suite does not cancel the other. Each gets its own runner and uses NSH
@@ -65,3 +68,13 @@ Superseded runs for the same branch or pull request are canceled automatically.
 
 The workflow uses read-only repository access and does not publish the website.
 Cloudflare continues to build and deploy independently when `main` changes.
+
+
+The local file/layout script uses a test-only browser host with synthetic File and
+DragEvent objects. It temporarily configures that host in nsh.json and restores
+the exact original file with an exit trap, including on failure. Run it serially
+with other NSH commands and development servers. Production App.tsx never imports
+the test host, and packaging runs after restoration.
+
+Set ROWTATION_BROWSER to the executable when NSH cannot discover Chromium. Use
+scripts/capture-layouts.sh to regenerate synthetic desktop/mobile screenshots.

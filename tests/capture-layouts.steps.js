@@ -1,0 +1,28 @@
+// Synthetic layout captures. Run with scripts/capture-layouts.sh.
+await app.setViewport(1440, 960);
+await app.setColorScheme("light");
+await app.screenshot("docs/screenshots/desktop-home.png");
+await app.press("Paste from clipboard");
+await app.paste("paste-input", {text: "order_id,customer,city,created_at,amount,paid,items.sku\n10231,Mia Chen,Brisbane,2026-11-02,128.40,true,RW-104\n10232,Oliver Smith,Sydney,2026-11-02,56.00,false,RW-221\n10233,Hana Sato,Brisbane City,2026-11-03,342.10,true,RW-118\n10234,Lucas Wong,Melbourne,2026-11-03,19.90,true,RW-007\n10235,Ava Patel,Perth,2026-11-04,87.25,false,RW-310\n10236,Noah Kim,Brisbane,2026-11-04,210.00,true,RW-104\n10237,Chloe Lee,Adelaide,2026-11-05,64.80,true,RW-552\n10238,Ethan Ng,Hobart,2026-11-05,15.00,false,RW-019\n10239,Grace Liu,Sydney,2026-11-06,499.00,true,RW-221\n10240,Leo Martin,Darwin,2026-11-06,73.60,true,RW-118\n10241,Isla Brown,Canberra,2026-11-06,38.20,false,RW-610\n10242,Jack Wilson,Gold Coast,2026-11-07,152.75,true,RW-104\n10243,Ruby Taylor,Cairns,2026-11-07,91.10,true,RW-007\n10244,Henry Zhao,Sydney,2026-11-07,26.40,false,RW-310\n10245,Zoe Clark,Perth,2026-11-07,318.00,true,RW-552\n10246,Max Hall,Melbourne,2026-11-07,44.90,true,RW-019\n"});
+await app.press("Review import");
+await app.screenshot("docs/screenshots/desktop-import.png");
+await app.press("Import document");
+await app.waitFor("16 rows · 7 columns");
+await app.press("Brisbane >> nth=0");
+await app.screenshot("docs/screenshots/desktop-document.png");
+await app.setViewport(1280, 480);
+await app.scroll("inspector-scroll", 1000);
+await app.screenshot("docs/screenshots/desktop-inspector-scrolled.png");
+await app.setViewport(390, 844);
+await app.screenshot("docs/screenshots/mobile-document.png");
+await app.press("Column info");
+await app.screenshot("docs/screenshots/mobile-inspector.png");
+await app.press("Done");
+await app.press("close-document");
+await app.screenshot("docs/screenshots/mobile-home.png");
+await app.press("Paste from clipboard");
+await app.screenshot("docs/screenshots/mobile-import.png");
+await app.press("Cancel");
+await app.setViewport(1440, 960);
+await app.setColorScheme("dark");
+await app.screenshot("docs/screenshots/desktop-home-dark.png");
