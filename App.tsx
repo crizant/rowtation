@@ -82,30 +82,41 @@ export function App() {
   const dragging = signal(false);
   let alive = true;
   let request = 0;
-  cleanup(() => { alive = false; request++; active()?.dispose(); });
+  cleanup(() => { alive = false; request++; BrowserImport.cancelPending(); active()?.dispose(); });
 
-  function dismiss() { request++; mode.set(null); draft.set(null); paste.set(""); error.set(""); busy.set(false); }
+  function resetImport() {
+    request++;
+    BrowserImport.cancelPending();
+    draft.set(null); busy.set(false); error.set("");
+  }
+  function dismiss() { resetImport(); mode.set(null); paste.set(""); }
   function fail(value: unknown) { error.set(value instanceof Error ? value.message : String(value)); }
   function review(file: LocalImport) {
-    request++;
-    busy.set(false);
-    error.set("");
-    if (file.error) { error.set(file.error); return; }
+    // Only a manual paste may retain its own editable text after failed detection.
+    const pasted = mode() === "paste" && file.requestId == null;
+    resetImport();
+    mode.set(pasted ? "paste" : null);
     try {
+      if (file.error) throw new Error(file.error);
       const result = ImportDetector.inspect(file.bytes, file.name);
       draft.set(file); delimiter.set(result.delimiter); ambiguous.set(result.ambiguous); headers.set(true); mode.set("review");
-    } catch (cause) { fail(cause); }
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : String(cause);
+      error.set(file.name ? `${file.name}: ${message}` : message);
+    }
   }
-  cleanup(BrowserImport.onFile(file => { if (alive) review(file); }, active => dragging.set(active)));
+  cleanup(BrowserImport.onFile(file => {
+    if (alive && file.requestId != null && BrowserImport.isCurrent(file.requestId)) review(file);
+  }, active => { if (alive) dragging.set(active); }));
 
   function pick() {
-    request++;
-    error.set("");
+    dismiss();
     try { BrowserImport.pick(); } catch (cause) { fail(cause); }
   }
   async function openPaste() {
-    const id = ++request;
-    error.set(""); paste.set(""); mode.set("paste");
+    dismiss();
+    const id = request;
+    mode.set("paste");
     try {
       const text = await Clipboard.readText();
       if (alive && id === request && !paste()) paste.set(text);
@@ -113,7 +124,8 @@ export function App() {
   }
   async function importDocument() {
     const file = draft();
-    if (!file || busy()) return;
+    if (mode() !== "review" || !file || busy()) return;
+    BrowserImport.cancelPending();
     const id = ++request;
     const options = { delimiter: delimiter(), headers: headers() };
     busy.set(true); error.set("");
@@ -137,7 +149,7 @@ export function App() {
 
   return <View class="flex-1 min-h-0 min-w-0 bg-muted/25 pt-[env(safe-area-inset-top)] pr-[env(safe-area-inset-right)] pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)]">
     <Each of={active() ? [active()!] : []} key={document => document.metadata.id}>
-      {document => <DocumentView document={document()} onClose={() => active.set(null)} onImport={openPaste} />}
+      {document => <DocumentView document={document()} onClose={() => { dismiss(); active.set(null); }} onImport={openPaste} />}
     </Each>
     <If when={!active()}>
       <Scroll class="flex-1 min-h-0" contentStyle={{ flexGrow: 1 }}>
@@ -195,7 +207,7 @@ export function App() {
           <Text class="text-xs text-muted-foreground">Check the separator and quoted fields, or choose another file. Your current document is unchanged.</Text></View></If>
         <View class="flex-row justify-end gap-3">
           <Button label="Cancel" quiet onPress={dismiss} />
-          <If when={mode() === "paste"} else={<Button label={busy() ? "Importing…" : "Import document"} disabled={busy()} onPress={importDocument} />}>
+          <If when={mode() === "paste"} else={<Button label={busy() ? "Importing…" : "Import document"} disabled={busy() || !draft()} onPress={importDocument} />}>
             <Button label="Review import" disabled={!paste()} onPress={() => review({ name: "Pasted data", bytes: new TextEncoder().encode(paste()) })} />
           </If>
         </View>

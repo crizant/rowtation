@@ -215,7 +215,12 @@ added. A failed constructor leaves the old session untouched.
 
 `BrowserImport.onFile(callback, onDrag)` owns a hidden local file input and document
 drag/drop listeners. Its returned stop removes the input, handlers and closures;
-in-flight reads check lifetime/generation before delivery. `pick()` clicks that
+in-flight reads check lifetime/generation before delivery. `cancelPending()`
+invalidates that same generation on UI cancellation or workflow changes. Each
+file result carries an opaque `requestId`; TSX checks `isCurrent(requestId)` again
+when a queued callback arrives. Rejected files clear obsolete review drafts and
+report the failing filename; parser errors keep only the named current draft so
+its separator/header options can be corrected. `pick()` clicks that
 input synchronously in the user's press. Bytes are read through browser File APIs
 in Rust/WASM, with the size cap checked before allocating a read buffer. Only one
 .csv/.tsv file is accepted. These APIs use registered NSH modules and generated

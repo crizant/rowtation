@@ -31,7 +31,7 @@ await app.keyboard.press("F9");
 await app.waitFor("Drop one CSV or TSV file at a time.");
 if (!app.texts().includes("picked.csv")) throw new Error("Multiple drop replaced document");
 await app.keyboard.press("F7");
-await app.waitFor("Choose a .csv or .tsv file. Other formats are not supported yet.");
+await app.waitFor("unsupported.json: Choose a .csv or .tsv file. Other formats are not supported yet.");
 await app.keyboard.press("F10");
 await app.waitFor("broken.csv");
 await app.press("Import document");
@@ -49,4 +49,48 @@ await app.press("Choose file…");
 await app.waitFor("picked.csv");
 await app.press("Import document");
 await app.waitFor("2 rows · 7 columns");
+
+// A rejected file must remove the previous review draft, never the open document.
+for (const [key, message] of [
+  ["F7", "unsupported.json: Choose a .csv or .tsv file. Other formats are not supported yet."],
+  ["F4", "invalid-utf8.csv: INVALID_UTF8: Save the file as UTF-8 CSV or TSV and try again."],
+]) {
+  await app.press("Import");
+  await app.press("Choose another file…");
+  await app.waitFor("picked.csv");
+  await app.keyboard.press(key);
+  await app.waitFor(message);
+  if (app.shows("app-dialog") || !app.texts().includes("00123")) throw new Error("Rejected file retained an importable draft or replaced the open document");
+}
+
+// Release controlled promises, then let NSH deliver their queued callbacks.
+async function releaseRead() {
+  await app.keyboard.press("F3");
+  await app.wait(50);
+}
+await app.press("Import");
+await app.keyboard.press("F2");
+await app.press("Cancel");
+await releaseRead();
+if (app.shows("app-dialog") || !app.texts().includes("00123")) throw new Error("Cancelled read reopened the dialog or changed the document");
+
+await app.keyboard.press("F2");
+await app.keyboard.press("F8");
+await app.waitFor("dropped.tsv");
+await releaseRead();
+if (app.texts().includes("delayed.csv")) throw new Error("Older read replaced the newer file draft");
+await app.press("Import document");
+await app.waitFor("1 row · 2 columns");
+
+await app.press("close-document");
+await app.keyboard.press("F2");
+await app.press("Paste from clipboard");
+await app.clear("paste-input");
+await app.paste("paste-input", { text: "name\nPaste replacement" });
+await releaseRead();
+if (app.value("paste-input") !== "name\nPaste replacement") throw new Error("Older file read replaced the newer paste workflow");
+await app.press("Review import");
+await app.press("Import document");
+await app.waitFor("Paste replacement");
+
 STEPS

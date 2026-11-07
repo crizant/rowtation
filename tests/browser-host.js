@@ -1,6 +1,7 @@
 // Test-only NSH web host. Real File/FileList/DragEvent objects exercise the
 // registered Rust browser adapter; this module is never shipped in the app.
 export function createHost() {
+  const pending = [];
   const fixture = (name, text) => new File([text], name, { type: 'text/csv' });
   document.addEventListener('click', event => {
     const input = event.target;
@@ -12,10 +13,25 @@ export function createHost() {
     queueMicrotask(() => input.dispatchEvent(new Event('change', { bubbles: true })));
   }, true);
   document.addEventListener('keydown', event => {
-    if (!['F7', 'F8', 'F9', 'F10'].includes(event.key)) return;
+    if (event.key === 'F3') {
+      event.preventDefault();
+      const read = pending.shift();
+      if (!read) throw new Error('No pending file read to release');
+      read();
+      return;
+    }
+    if (!['F2', 'F4', 'F7', 'F8', 'F9', 'F10'].includes(event.key)) return;
     event.preventDefault();
     const dataTransfer = new DataTransfer();
-    if (event.key === 'F7') {
+    if (event.key === 'F2') {
+      const file = fixture('delayed.csv', 'name\nDelayed');
+      Object.defineProperty(file, 'arrayBuffer', { value: () => new Promise(resolve => {
+        pending.push(() => resolve(new TextEncoder().encode('name\nDelayed').buffer));
+      }) });
+      dataTransfer.items.add(file);
+    } else if (event.key === 'F4') {
+      dataTransfer.items.add(fixture('invalid-utf8.csv', new Uint8Array([255])));
+    } else if (event.key === 'F7') {
       dataTransfer.items.add(fixture('unsupported.json', '{"name":"Mia"}'));
     } else if (event.key === 'F10') {
       dataTransfer.items.add(fixture('broken.csv', 'name,city\n"unclosed'));

@@ -8,6 +8,8 @@ pub struct LocalImport {
     pub name: String,
     /// File bytes, capped at 8 MiB before reading.
     pub bytes: Vec<u8>,
+    /// Read generation, checked again when a queued callback reaches the UI.
+    pub request_id: Option<String>,
     /// Read failure, if any; never replaces the active document.
     pub error: Option<String>,
 }
@@ -28,6 +30,27 @@ impl BrowserImport {
         #[cfg(not(target_arch = "wasm32"))]
         {
             Err("File selection is available in the web application.".into())
+        }
+    }
+
+    /// Invalidate pending reads when the UI cancels or starts another import workflow.
+    /// The browser read may finish, but its result will no longer be delivered.
+    pub fn cancel_pending() {
+        #[cfg(target_arch = "wasm32")]
+        browser::cancel_pending();
+    }
+
+    /// Check the same read generation at callback delivery, including callbacks that
+    /// were already queued before cancelPending. IDs are opaque, not document IDs.
+    pub fn is_current(request_id: String) -> bool {
+        #[cfg(target_arch = "wasm32")]
+        {
+            browser::is_current(&request_id)
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let _ = request_id;
+            false
         }
     }
 
@@ -57,6 +80,19 @@ mod browser {
     use wasm_bindgen_futures::{JsFuture, spawn_local};
     use web_sys::{DragEvent, File, HtmlInputElement};
     const INPUT_ID: &str = "rowtation-file-input";
+    // The adapter already owns one input/listener per app. Workflow cancellation
+    // and out-of-order reads invalidate the same generation, not separate tokens.
+    thread_local! {
+        static GENERATION: Rc<Cell<u64>> = Rc::new(Cell::new(0));
+    }
+
+    pub fn cancel_pending() {
+        GENERATION.with(|generation| generation.set(generation.get().wrapping_add(1)));
+    }
+
+    pub fn is_current(request_id: &str) -> bool {
+        GENERATION.with(|generation| generation.get().to_string() == request_id)
+    }
 
     fn document() -> Result<web_sys::Document, String> {
         web_sys::window()
@@ -106,7 +142,8 @@ mod browser {
         let id = generation.get().wrapping_add(1);
         generation.set(id);
         spawn_local(async move {
-            let result = read(file).await;
+            let mut result = read(file).await;
+            result.request_id = Some(id.to_string());
             if live.get() && generation.get() == id {
                 callback.post(result);
             }
@@ -132,7 +169,7 @@ mod browser {
             .append_child(&input)
             .map_err(|_| "Could not enable file picker.")?;
         let live = Rc::new(Cell::new(true));
-        let generation = Rc::new(Cell::new(0));
+        let generation = GENERATION.with(Rc::clone);
         let (picked, alive, version, changed) = (
             input.clone(),
             live.clone(),
@@ -186,6 +223,7 @@ mod browser {
             if files.length() != 1 {
                 version.set(version.get().wrapping_add(1));
                 callback.post(LocalImport {
+                    request_id: Some(version.get().to_string()),
                     error: Some("Drop one CSV or TSV file at a time.".into()),
                     ..Default::default()
                 });
