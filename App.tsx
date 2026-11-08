@@ -519,6 +519,8 @@ function DiagnosticsPanel() {
   </View>;
 }
 
+const homeTagline = "View, Edit & Convert Your Data.";
+
 function Home(props: { dragging: boolean; onPick: () => void; onPaste: () => void }) {
   keymap.bind("mod+v", () => props.onPaste(), { when: "notEditing" });
   const note = "Your data stays in this browser. Nothing is uploaded.";
@@ -530,7 +532,10 @@ function Home(props: { dragging: boolean; onPick: () => void; onPaste: () => voi
     <If when={windowSize().width >= 640} else={
       <View class="flex-1 justify-center px-5 py-10">
         <View class="w-full max-w-[560px] gap-6 self-center">
-          <Text class="text-4xl font-bold tracking-tight text-foreground">Rowtation</Text>
+          <View class="gap-2">
+            <Text class="text-4xl font-bold tracking-tight text-foreground">Rowtation</Text>
+            <Text class="text-sm text-muted-foreground">{homeTagline}</Text>
+          </View>
           <BaseButton testID="import-area" onPress={() => props.onPick()}
             class="cursor-pointer min-h-56 items-center justify-center gap-3 rounded-3xl border border-border/70 bg-background p-8 shadow-sm active:bg-muted/40 focus:ring-2 focus:ring-ring">
             <Icon name="upload-simple" class="h-8 w-8" />
@@ -550,7 +555,7 @@ function Home(props: { dragging: boolean; onPick: () => void; onPaste: () => voi
             <Image src={appIcon} accessibilityElementsHidden class="h-16 w-16" />
             <View class="items-center gap-1.5">
               <Text class="text-3xl font-semibold tracking-tight text-foreground">Rowtation</Text>
-              <Text class="text-sm text-muted-foreground">Import and inspect structured data.</Text>
+              <Text class="text-center text-sm text-muted-foreground">{homeTagline}</Text>
             </View>
           </View>
           <View testID="import-area" classList={{ "ring-2 ring-ring": props.dragging }}

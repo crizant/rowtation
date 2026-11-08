@@ -150,7 +150,9 @@ jobs:
 
       - name: Package the web application
         if: matrix.suite == 'browser'
-        run: nsh package --target web -o dist
+        run: |
+          nsh package --target web -o dist
+          node scripts/web-metadata.mjs dist/Rowtation/index.html
 
       - name: Prepare Node for production-package checks
         if: matrix.suite == 'browser'

@@ -206,7 +206,8 @@ and by its stable-ID read. Production UI tests open `App.tsx` and cover paste im
 responsive inspection, keyboard selection and offscreen row-window recycling.
 
 Verify `cargo fmt --check`, `nsh check`, `nsh build`, `nsh test`,
-`scripts/test-browser.sh` and `nsh package --target web -o dist` for changes. A web
+`scripts/test-browser.sh`, `nsh package --target web -o dist` and
+`node scripts/web-metadata.mjs dist/Rowtation/index.html` for changes. A web
 package verifies the in-memory csv dependency path compiles to wasm32; browser
 smoke tests verify runtime compatibility. The large-input thresholds are not
 large-file responsiveness benchmarks. Measure representative browsers before
