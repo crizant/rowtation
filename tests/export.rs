@@ -165,6 +165,64 @@ fn json_xml_explicit_policy_and_rejections() {
     assert!(duplicate.serialize(options("json")).is_err());
 }
 #[test]
+fn xml_names_follow_xml_1_0_and_round_trip_unicode() {
+    let invalid = session(r#"[{"col²":"x"}]"#, "json");
+    let before = invalid.metadata();
+    let err = invalid.serialize(options("xml")).unwrap_err();
+    assert_eq!(err.code(), "LOSSY_EXPORT");
+    assert!(err.message().contains("XML name"));
+    assert_eq!(invalid.metadata().revision, before.revision);
+    assert!(!invalid.metadata().dirty);
+    assert_eq!(invalid.read_cell(1, 1).unwrap().text.as_deref(), Some("x"));
+    // µ is Unicode alphabetic but not an XML 1.0 NameStartChar.
+    let micro = session(r#"[{"µ":"x"}]"#, "json");
+    assert_eq!(
+        micro.serialize(options("xml")).unwrap_err().code(),
+        "LOSSY_EXPORT"
+    );
+
+    // Combining diaeresis and middle dot are XML NameChars.
+    let marked = session("[{\"na\u{0308}me\":\"ok\",\"a\u{00B7}b\":\"dot\"}]", "json");
+    let marked_xml = output(&marked, "xml");
+    assert!(marked_xml.contains("<na\u{0308}me>ok</na\u{0308}me>"));
+    assert!(marked_xml.contains("<a\u{00B7}b>dot</a\u{00B7}b>"));
+    let marked_round = session(&marked_xml, "xml");
+    assert_eq!(
+        marked_round.read_cell(1, 1).unwrap().text.as_deref(),
+        Some("ok")
+    );
+    assert_eq!(
+        marked_round.read_cell(1, 2).unwrap().text.as_deref(),
+        Some("dot")
+    );
+    let marked_again = output(&marked_round, "xml");
+    assert!(marked_again.contains("<na\u{0308}me"));
+    assert!(marked_again.contains("ok</na\u{0308}me>"));
+    assert!(marked_again.contains("<a\u{00B7}b"));
+    assert!(marked_again.contains("dot</a\u{00B7}b>"));
+
+    let s = session(r#"[{"café":"雪","名前":"Hana"}]"#, "json");
+    let xml = output(&s, "xml");
+    assert!(xml.contains("<café>雪</café>"));
+    assert!(xml.contains("<名前>Hana</名前>"));
+    let round = session(&xml, "xml");
+    assert_eq!(round.columns()[0].name, "café#text");
+    assert_eq!(round.columns()[1].name, "名前#text");
+    assert_eq!(round.read_cell(1, 1).unwrap().text.as_deref(), Some("雪"));
+    assert_eq!(round.read_cell(1, 2).unwrap().text.as_deref(), Some("Hana"));
+    let again = output(&round, "xml");
+    assert!(again.contains("<café"));
+    assert!(again.contains("雪</café>"));
+    assert!(again.contains("<名前"));
+    assert!(again.contains("Hana</名前>"));
+    let round2 = session(&again, "xml");
+    assert_eq!(round2.read_cell(1, 1).unwrap().text.as_deref(), Some("雪"));
+    assert_eq!(
+        round2.read_cell(1, 2).unwrap().text.as_deref(),
+        Some("Hana")
+    );
+}
+#[test]
 fn filenames_and_failures_preserve_document() {
     use nsh_app_rowtation::browser_export::filename;
     assert_eq!(filename("orders.csv", "json").unwrap(), "orders.json");

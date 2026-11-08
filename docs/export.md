@@ -55,8 +55,8 @@ XML source leaves remain text. Unplaced edits block reconstruction.
 Cross-format XML uses `rows/row`, object keys as element names, arrays as a named
 parent containing repeated `item` children, and scalar text without inference.
 Types and array identity are not recovered on XML reimport. Null and empty
-containers block export; unsupported element names and XML 1.0 characters also
-block. JSON conversion from XML uses `@attribute`, `#text` and arrays of child
+containers block export; names that are not XML 1.0 Names, and characters
+forbidden by XML 1.0, also block. JSON conversion from XML uses `@attribute`, `#text` and arrays of child
 objects; expanded names preserve namespace identities but declarations and the
 wrapper, record names and interleaved child order are omitted. These policies are shown before conversion.
 
