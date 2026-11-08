@@ -136,6 +136,7 @@ nsh test                             # Rust tests and headless UI tests
 scripts/test-browser.sh               # Shared tests with real browser input
 nsh package --target web -o dist      # Build the deployable static website
 node scripts/web-metadata.mjs dist/Rowtation/index.html
+node scripts/web-metadata.mjs --check dist/Rowtation/index.html
 ```
 
 NSH may compile a local helper to describe Rust exports or run headless tests.

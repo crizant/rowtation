@@ -136,6 +136,10 @@ jobs:
         if: matrix.suite == 'checks'
         run: nsh test
 
+      - name: Check packaged HTML metadata
+        if: matrix.suite == 'checks'
+        run: node --test scripts/web-metadata.test.mjs
+
       - name: Run browser and WASM integration tests
         if: matrix.suite == 'browser'
         env:
@@ -153,6 +157,7 @@ jobs:
         run: |
           nsh package --target web -o dist
           node scripts/web-metadata.mjs dist/Rowtation/index.html
+          node scripts/web-metadata.mjs --check dist/Rowtation/index.html
 
       - name: Prepare Node for production-package checks
         if: matrix.suite == 'browser'

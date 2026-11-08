@@ -42,3 +42,4 @@ cargo install wasm-bindgen-cli --version "$bindgen_version" --locked
 
 nsh package --target web -o dist
 node scripts/web-metadata.mjs dist/Rowtation/index.html
+node scripts/web-metadata.mjs --check dist/Rowtation/index.html

@@ -520,6 +520,7 @@ function DiagnosticsPanel() {
 }
 
 const homeTagline = "View, Edit & Convert Your Data.";
+const homeSummary = "Search, edit, and convert CSV, TSV, JSON, NDJSON & XML files.";
 
 function Home(props: { dragging: boolean; onPick: () => void; onPaste: () => void }) {
   keymap.bind("mod+v", () => props.onPaste(), { when: "notEditing" });
@@ -535,6 +536,7 @@ function Home(props: { dragging: boolean; onPick: () => void; onPaste: () => voi
           <View class="gap-2">
             <Text class="text-4xl font-bold tracking-tight text-foreground">Rowtation</Text>
             <Text class="text-sm text-muted-foreground">{homeTagline}</Text>
+            <Text class="text-sm text-muted-foreground">{homeSummary}</Text>
           </View>
           <BaseButton testID="import-area" onPress={() => props.onPick()}
             class="cursor-pointer min-h-56 items-center justify-center gap-3 rounded-3xl border border-border/70 bg-background p-8 shadow-sm active:bg-muted/40 focus:ring-2 focus:ring-ring">
@@ -556,6 +558,7 @@ function Home(props: { dragging: boolean; onPick: () => void; onPaste: () => voi
             <View class="items-center gap-1.5">
               <Text class="text-3xl font-semibold tracking-tight text-foreground">Rowtation</Text>
               <Text class="text-center text-sm text-muted-foreground">{homeTagline}</Text>
+              <Text class="max-w-md text-center text-sm text-muted-foreground">{homeSummary}</Text>
             </View>
           </View>
           <View testID="import-area" classList={{ "ring-2 ring-ring": props.dragging }}

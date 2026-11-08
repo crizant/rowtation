@@ -40,10 +40,11 @@ browsers while preserving actions. Style semantic NSH controls in the shared lay
 
 
 On pointer desktops the import home is centered: app mark, title, the tagline
-“View, Edit & Convert Your Data.”, a rounded drop
+“View, Edit & Convert Your Data.”, the line “Search, edit, and convert CSV, TSV,
+JSON, NDJSON & XML files.”, a rounded drop
 card with visible Paste (⌘V/Ctrl+V also works) and Choose file buttons, and supported-format
-chips. Narrow and touch browsers use a left-aligned title with that same tagline,
-a pressable import card
+chips. Narrow and touch browsers use a left-aligned title with that same tagline
+and line, a pressable import card
 and a grouped action list. Show CSV, TSV, JSON, NDJSON and XML as supported; there is no recent
 history. The privacy note is concise and mentions large-file confirmation.
 
