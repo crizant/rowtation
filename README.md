@@ -7,7 +7,7 @@ target.** There are no iOS, Android, native desktop or TUI builds.
 
 ## Product scope
 
-Users will paste, drop or open CSV, TSV, JSON, NDJSON, XML and Excel files;
+Users will paste, drop or open CSV, TSV, JSON, NDJSON and XML files;
 inspect them as a table; sort, search, edit cells and find and replace values;
 then export and download the result.
 
@@ -16,13 +16,14 @@ drop one into the browser, or paste text; review the separator and header option
 then inspect a virtualized grid with keyboard/touch cell selection and column
 statistics. Sorting, scoped search, literal/regex find and replace, cell editing,
 bounded undo/redo and accurate modified-cell counts are implemented. Desktop uses
-a right inspector; narrow browsers use a contextual panel. Excel and export/download UI remain planned. See [structured import rules](docs/structured-imports.md) for nesting, exact types and XML limitations. See [operation semantics](docs/operations.md).
+a right inspector; narrow browsers use a contextual panel. Five-format export, browser download and clipboard copy are implemented. Excel is a possible future feature only. See [export policies and conversion matrix](docs/export.md). See [structured import rules](docs/structured-imports.md) for nesting, exact types and XML limitations. See [operation semantics](docs/operations.md).
 
 Data stays local. There is no backend, upload, telemetry, persistent storage or
 session history. Closing an unmodified document releases its Rust session.
-Closing or replacing a modified document asks first, because there is no export
-or download yet; confirming discards those changes. Import failures preserve
+Closing or replacing a modified document asks first, even after export; confirming discards those changes. Downloads do not reset the imported baseline. Import failures preserve
 the active document; a successful replacement releases the old session.
+
+See [export release validation](docs/export-release.md) for production-download checks and export screenshots.
 
 See [UI validation instructions](docs/ui-validation.md) for local desktop/mobile
 screenshot generation, visual inspection guidance, and browser validation commands.
@@ -42,14 +43,10 @@ extend the schema with generated columns. A blank record is one empty text field
 with any remaining columns missing. Empty input has no rows or columns. A terminal
 record separator ends the last record; each additional blank line adds a row.
 
-Serialization returns UTF-8 bytes with configurable delimiter/header inclusion,
-standard quoting and LF record separators. It preserves field text and row order,
-including embedded CR/LF. It does not reproduce original quote style, BOM or record
-separator style. Trailing missing fields remain absent. Null, interior missing
-and non-text typed values require a future explicit conversion policy and currently
-fail with `LOSSY_EXPORT`. Generated column names are included when headers are
-requested. Spreadsheet formula protection/downloads belong to a later export UI;
-this internal serializer emits literal text unchanged.
+Export supports CSV, TSV, JSON, NDJSON and supported tabular XML with explicit
+mapping policies, source reconstruction, formula-safe text and original/current
+sorted ordering. See [the conversion matrix and limits](docs/export.md). Export
+does not change document dirty state or revision.
 
 There are no size caps on input, rows, columns, stored fields, value length or
 serialized output; the practical ceiling is the browser tab's memory and WASM's
@@ -158,7 +155,7 @@ python3 -m http.server 8080 --directory dist/Rowtation
 
 Open http://localhost:8080. Deploy that directory to a static host; a backend
 service is not required by the planned architecture. Packaging does not publish
-the website. Test imports against the deployed origin before release. Downloads are not implemented.
+the website. Test imports against the deployed origin before release. Validate downloads and clipboard permissions on the deployed origin before release.
 
 Cloudflare Pages builds from the GitHub integration. Its build command is
 `sh scripts/cloudflare-pages-build.sh`, and its output directory is
@@ -174,7 +171,7 @@ App.test.tsx           NSH bridge and app-runtime smoke tests
 components/            Styled controls, DataGrid and Inspector
 src/lib.rs             Rust API registered as rowtation/native
 src/document/          Canonical values, identities and storage access
-src/formats/           CSV/TSV and structured import adapters, delimited serializer
+src/formats/           CSV/TSV and structured adapters, multi-format export
 src/session.rs         Retained NSH session, row windows and profile cache
 src/inspection.rs      Rust delimiter suggestions, size measurement and profile records
 src/browser_import.rs Browser file input/drop adapter through registered NSH API

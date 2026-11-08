@@ -6,7 +6,6 @@ import caretRight from "./icons/caret-right.svg";
 import check from "./icons/check.svg";
 import clipboardText from "./icons/clipboard-text.svg";
 import copy from "./icons/copy.svg";
-import dotsThree from "./icons/dots-three.svg";
 import folderOpen from "./icons/folder-open.svg";
 import info from "./icons/info.svg";
 import magnifyingGlass from "./icons/magnifying-glass.svg";
@@ -23,7 +22,6 @@ const icons = {
   check,
   "clipboard-text": clipboardText,
   copy,
-  "dots-three": dotsThree,
   "folder-open": folderOpen,
   info,
   "magnifying-glass": magnifyingGlass,

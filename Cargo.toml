@@ -22,4 +22,4 @@ roxmltree = "0.21.2"
 js-sys = "0.3.107"
 wasm-bindgen = "0.2.130"
 wasm-bindgen-futures = "0.4.80"
-web-sys = { version = "0.3.107", features = ["Window", "Document", "HtmlElement", "HtmlInputElement", "Element", "Event", "EventTarget", "File", "FileList", "DragEvent", "DataTransfer", "Node", "DomException", "Blob", "Performance"] }
+web-sys = { version = "0.3.107", features = ["Window", "Document", "HtmlElement", "HtmlInputElement", "Element", "Event", "EventTarget", "File", "FileList", "DragEvent", "DataTransfer", "Node", "DomException", "Blob", "Performance", "Url", "HtmlAnchorElement", "BlobPropertyBag"] }

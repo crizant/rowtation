@@ -15,6 +15,7 @@ import { Inspector } from "./components/Inspector";
 import { Checkbox } from "./components/Checkbox";
 import { diagnosticsOn, measurements, record, timed, timeToNextFrame, wasmMemory } from "./components/diagnostics";
 import { PREVIEW_BYTES } from "./components/gridRowCache";
+import { ExportDialog } from "./components/ExportDialog";
 import { ValueDialog } from "./components/ValueDialog";
 
 interface OpenDocument {
@@ -44,7 +45,7 @@ function EditInput(props: { value: string; onChange: (value: string) => void; on
     submitBehavior="submit" onSubmit={() => commit()} />;
 }
 
-function DocumentView(props: { document: OpenDocument; onClose: () => void; onImport: () => void }) {
+function DocumentView(props: { document: OpenDocument; onClose: () => void }) {
   cleanup(() => props.document.dispose());
   const metadata = signal(props.document.metadata);
   const version = signal(0);
@@ -67,6 +68,7 @@ function DocumentView(props: { document: OpenDocument; onClose: () => void; onIm
   const pending = signal(false);
   const operationError = signal("");
   const notice = signal("");
+  const exporting = signal(false);
   const editing = signal(false);
   const editDraft = signal("");
   let focusGrid = () => {};
@@ -252,8 +254,8 @@ function DocumentView(props: { document: OpenDocument; onClose: () => void; onIm
       sorting.set(next); refresh();
     });
   }
-  function history(redo: boolean) { attempt(() => { props.document.session.history(redo); refresh(); }); }
-  function beginEdit() { if (selection()) { editDraft.set(wholeValue() ?? ""); editing.set(true); } }
+  function history(redo: boolean) { if (exporting()) return; attempt(() => { props.document.session.history(redo); refresh(); }); }
+  function beginEdit() { if (exporting()) return; if (selection()) { editDraft.set(wholeValue() ?? ""); editing.set(true); } }
   function editAt(rowIndex: number, columnIndex: number) {
     const row = props.document.session.rows({ offset: rowIndex, limit: 1, columnOffset: columnIndex, columnLimit: 1 }).rows[0];
     if (!row) return;
@@ -273,7 +275,7 @@ function DocumentView(props: { document: OpenDocument; onClose: () => void; onIm
     if (!modified) { action(); return; }
     void AlertDialog.show({
       title: "Discard unsaved changes?",
-      description: `${count(modified, "modified cell", "modified cells")} will be dropped. Rowtation cannot export or download this document yet.`,
+      description: `${count(modified, "modified cell", "modified cells")} will be dropped. Export before closing if you need a copy. Downloads do not reset the imported baseline.`,
       closeOnEscape: true,
       actions: [
         { id: "keep", label: "Keep editing", role: "cancel" },
@@ -291,7 +293,7 @@ function DocumentView(props: { document: OpenDocument; onClose: () => void; onIm
     input.setSelection(0, length);
   }
   function openFind() {
-    if (editing()) return;
+    if (editing() || exporting()) return;
     selectQuery = true;
     const wasOpen = finding();
     finding.set(true);
@@ -371,7 +373,7 @@ function DocumentView(props: { document: OpenDocument; onClose: () => void; onIm
   keymap.bind("f2", () => { if (finding() || editing()) return; beginEdit(); });
   keymap.bind("mod+f", openFind);
   effect(() => {
-    if (!finding()) return;
+    if (!finding() || exporting()) return;
     if (editing()) {
       keymap.bind("shift+enter", () => editDraft.set(`${editDraft()}\n`), { when: "always" });
       return;
@@ -406,9 +408,7 @@ function DocumentView(props: { document: OpenDocument; onClose: () => void; onIm
         tooltip={finding() ? undefined : `Find ${keymap.label("mod+f")}`} />
       <Button label="Undo" quiet compact={wide()} icon="arrow-counter-clockwise" disabled={!edits().canUndo} onPress={() => history(false)} tooltip={`Undo ${keymap.label("mod+z")}`} />
       <Button label="Redo" quiet compact={wide()} icon="arrow-clockwise" disabled={!edits().canRedo} onPress={() => history(true)} tooltip={`Redo ${keymap.label("mod+shift+z")}`} />
-      <Menu popupClass={menuPopup} backdropClass="bg-foreground/20" trigger={<Button label="More" quiet compact={wide()} icon="dots-three" onPress={() => {}} />}>
-        <MenuRow label="Import…" onSelect={() => confirmDiscard(() => props.onImport())} />
-      </Menu>
+      <If when={wide()}><Button label="Export…" compact onPress={() => exporting.set(true)} /></If>
     </Toolbar>
     <If when={finding()}>
       <View class="shrink-0 gap-2 border-b border-border/70 px-3 py-2">
@@ -462,7 +462,7 @@ function DocumentView(props: { document: OpenDocument; onClose: () => void; onIm
               <Icon name="info" class="h-4 w-4" />
               <Text class="text-sm font-medium text-foreground">Column info</Text>
             </BaseButton>
-            <Button label="Import…" onPress={() => confirmDiscard(() => props.onImport())} />
+            <Button label="Export…" onPress={() => exporting.set(true)} />
           </View>
         </If>
       </View>
@@ -477,6 +477,7 @@ function DocumentView(props: { document: OpenDocument; onClose: () => void; onIm
         </View>
       </If>
     </View>
+    <If when={exporting()}><ExportDialog session={props.document.session} name={props.document.name} onClose={() => exporting.set(false)} /></If>
     <If when={info() && windowSize().width < 900}>
       <Dialog title="Column information" onClose={closeInfo}>
         <Scroll style={{ maxHeight: windowSize().height * 0.6 }} class="min-h-0"><Inspector column={column()} profile={profile()} metadata={metadata()} selection={selection()} progress={progress()}
@@ -725,7 +726,7 @@ export function App() {
 
   return <View class="flex-1 min-h-0 min-w-0 bg-muted/40 pt-[env(safe-area-inset-top)] pr-[env(safe-area-inset-right)] pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)]">
     <Each of={active() ? [active()!] : []} key={document => document.metadata.id}>
-      {document => <DocumentView document={document()} onClose={() => { dismiss(); active.set(null); }} onImport={openPaste} />}
+      {document => <DocumentView document={document()} onClose={() => { dismiss(); active.set(null); }} />}
     </Each>
     <If when={!active()}>
       <Home dragging={dragging()} onPick={pick} onPaste={() => { if (!mode()) void openPaste(); }} />

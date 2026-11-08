@@ -29,9 +29,21 @@ pub struct ImportOptions {
 #[derive(JsObject, Default)]
 #[non_exhaustive]
 pub struct ExportOptions {
-    /// One ASCII delimiter, or the source delimiter when omitted.
+    /// Explicit destination: csv, tsv, json, ndjson or xml. Omitted keeps legacy CSV behavior.
+    pub format: Option<String>,
+    /// Export the current sorted order instead of original order.
+    pub sorted: Option<bool>,
+    /// Indent JSON or XML. NDJSON is always one record per line.
+    pub pretty: Option<bool>,
+    /// Reconstruct retained source shapes; defaults to true.
+    pub reconstruct: Option<bool>,
+    /// Prefix dangerous delimited text (including headers) with an apostrophe.
+    pub safe_text: Option<bool>,
+    /// Explicitly accept the warnings returned by exportWarning.
+    pub allow_lossy: Option<bool>,
+    /// One ASCII delimiter. Explicit formats default to comma/tab; legacy calls use source settings.
     pub delimiter: Option<String>,
-    /// Include ordered column names, or use the source header mode when omitted.
+    /// Include column names. Explicit formats default true; legacy calls use source settings.
     pub headers: Option<bool>,
 }
 
@@ -483,21 +495,31 @@ impl DocumentSession {
         })
     }
 
+    /// Mapping warning for the chosen destination. Acknowledgement is required before serialization.
+    pub fn export_warning(&self, options: ExportOptions) -> Result<String, EngineError> {
+        crate::formats::export::warning(&self.document, &options)
+    }
+
+    /// Serialize text for clipboard use. Only the final text crosses into JavaScript.
+    pub fn serialize_text(&self, options: ExportOptions) -> Result<String, EngineError> {
+        String::from_utf8(self.serialize(options)?)
+            .map_err(|e| EngineError::new("SERIALIZE_FAILED", e.to_string()))
+    }
+
+    /// Start a local browser download synchronously within the user's press.
+    /// Returns the sanitized filename; dirty state and revision are untouched.
+    pub fn download(&self, name: String, options: ExportOptions) -> Result<String, EngineError> {
+        let format = options.format.as_deref().unwrap_or("csv");
+        let filename = crate::browser_export::filename(&name, format)?;
+        let bytes = self.serialize(options)?;
+        crate::browser_export::download(&bytes, &filename)?;
+        Ok(filename)
+    }
+
     /// Serialize the whole document to UTF-8 bytes (Uint8Array). This is an internal
     /// operation, not a browser download. Does not mutate dirty state or revision.
     pub fn serialize(&self, options: ExportOptions) -> Result<Vec<u8>, EngineError> {
-        if self.document.structure().is_some() {
-            return Err(EngineError::new(
-                "LOSSY_EXPORT",
-                "Structured export is not implemented. Flattened delimited output would lose source structure and types.",
-            ));
-        }
-        let source = char::from(self.document.source_delimiter()).to_string();
-        delimited::serialize(
-            &self.document,
-            options.delimiter.as_deref().unwrap_or(&source),
-            options.headers.unwrap_or(self.document.source_headers()),
-        )
+        crate::formats::export::serialize(&self.document, &self.operations.order, &options)
     }
 }
 

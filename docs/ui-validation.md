@@ -64,14 +64,16 @@ Verified on 2026-11-08 with NSH 0.4.0 and Chrome for Testing:
 - `nsh test`: 68 passed, with 2 ignored stress tests (41 Rust tests and 27 UI/cache workflows). The added workflows cover dirty close/replace confirmation, clipboard text while a cell is highlighted, double-press target selection, the cell menu, keyboard find/undo/redo, and the compact mobile find bar.
 - `nsh test --target web --browser <Chromium>`: 27 passed, including removal of search highlights after closing Find and the compact mobile find bar.
 - Native `cargo clippy --all-targets` with warnings denied: passed. The operations library was not changed in this pass.
-- A phone-width check of the running web app shows the filename and format on two lines and the find field beside previous and next. Case, regex, column scope, and Replace… sit on the following row. Match tint is visible. `scripts/test-browser-files.sh` passed after opening Import… from More on the wide document. `tests/operations-layouts.steps.js` and `nsh package` were not re-run for this chrome change.
+- A phone-width check of the running web app shows the filename and format on two lines and the find field beside previous and next. Case, regex, column scope, and Replace… sit on the following row. Match tint is visible. At that time, `scripts/test-browser-files.sh` opened Import… from More on the wide document. The document chrome no longer has that menu or the mobile Import… action; Back returns home, and the file script drops a replacement while a document is open. `tests/operations-layouts.steps.js` and `nsh package` were not re-run for this chrome change.
 - The later search refinement was checked with `nsh check` and `nsh test App.test.tsx` (24 passed), plus the search-index unit test. Those runs cover empty, pending, no-result, and regex-error status; the same hit across replace, undo, redo, and option changes; keyboard navigation; a match past the 512-byte preview; and Next/Previous staying disabled while a search is pending. A 390-point check of the running app shows the query beside previous and next, with the count, Aa, regex, All, and Replace… on the next row and nothing past the screen edge. Layout captures were not regenerated.
 - The test browser does not report a desktop pointer, so the 34-point desktop grid density and compact controls are not shown in these captures. Import-layout captures were not regenerated for this operations pass.
+- Later the same day, the More menu and the mobile Import… action were removed. Back returns home before another import and still asks before discarding edits. `nsh test` passed 114 tests and skipped 7 existing benchmark/stress tests. Browser runs of `App.test.tsx` (24) and `StructuredImport.test.tsx` (7) passed, as did `scripts/test-browser-files.sh`, `nsh check` and `nsh build`. Desktop, 390-point and 320-point checks show Back, Find, Undo and Redo, with Export… in the desktop toolbar and beside Column info on narrow screens. Dropping a file onto an open document can still start a replacement import.
 
 ## Limits
 
 CSV/TSV values remain literal Text. There is no numeric/date inference, automatic
-header inference, document history, persistence, or export/download UI. Sorting,
+header inference, document history or persistence. Export supports five formats
+with explicit policies; see [export](export.md). Sorting,
 search, cell editing, literal replacement and bounded undo/redo stay in the
 active in-memory document. The existing internal serializer remains available to
 Rust callers.

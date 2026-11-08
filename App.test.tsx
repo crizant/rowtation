@@ -16,20 +16,22 @@ test("paste import keeps literal values, inspects columns and closes the session
   expect(app.texts()).not.toContain("00123");
 });
 
-test("failed import preserves the document and successful import replaces it", async () => {
+test("back returns home before another import and failed imports can be retried", async () => {
   const app = await open("./App.tsx", { clipboard: "name\nOriginal" });
   await app.press("Paste from clipboard");
   await app.press("Review import");
   await app.press("Import document");
   await app.waitFor("1 row · 1 column");
-  await app.press("Import…");
+  await app.press("close-document");
+  await app.press("Paste from clipboard");
   await app.paste("paste-input", { text: '\n"unclosed' });
   await app.press("Review import");
   await app.press("Import document");
   await app.waitFor("text:Correct the input or choose another format or file. Your current document is unchanged.");
   await app.press("Cancel");
-  expect(app.texts()).toContain("Original");
-  await app.press("Import…");
+  expect(app.texts()).toContain("Rowtation");
+  expect(app.texts()).not.toContain("Original");
+  await app.press("Paste from clipboard");
   await app.clear("paste-input");
   await app.paste("paste-input", { text: "name\nReplacement" });
   await app.press("Review import");
@@ -47,6 +49,8 @@ test("mobile TSV import without headers and contextual inspector", async () => {
   await app.press("First row contains column headers");
   await app.press("Import document");
   await app.waitFor("2 rows · 2 columns");
+  expect(app.texts()).not.toContain("More");
+  expect(app.texts()).not.toContain("Import…");
   expect(app.texts()).toContain("Column 1");
   await app.press("001");
   await app.press("Column info");
@@ -250,7 +254,7 @@ test("cell editor keyboard commits, tabs, and cancels without mutating drafts", 
   expect(app.shows("id:replace-input")).toBe(false);
 });
 
-test("closing or replacing a modified document asks before discarding it", async () => {
+test("Back asks before discarding a modified document", async () => {
   const app = await open("./App.tsx", { width: 1280, height: 800, clipboard: "id,city\n1,Sydney" });
   await app.press("Paste from clipboard"); await app.press("Review import"); await app.press("Import document");
   await app.waitFor("1 row · 2 columns");
@@ -260,13 +264,13 @@ test("closing or replacing a modified document asks before discarding it", async
   let answer = "Keep editing";
   app.onDialog(dialog => {
     expect(dialog.title).toBe("Discard unsaved changes?");
-    expect(dialog.message ?? "").toContain("cannot export");
+    expect(dialog.message ?? "").toContain("Downloads do not reset the imported baseline");
     return answer;
   });
   await app.press("close-document");
   expect(app.texts()).toContain("Melbourne");
-  await app.press("More"); await app.press("Import…");
-  expect(app.texts()).toContain("Melbourne");
+  expect(app.texts()).not.toContain("More");
+  expect(app.texts()).not.toContain("Import…");
   expect(app.shows("id:paste-input")).toBe(false);
   answer = "Discard changes";
   await app.press("close-document");
@@ -338,13 +342,16 @@ test("mobile find keeps the query separate from replacement", async () => {
   await app.waitFor("1 modified · Unsaved");
   let answer = "Keep editing";
   app.onDialog(dialog => {
-    expect(dialog.message ?? "").toContain("cannot export");
+    expect(dialog.message ?? "").toContain("Downloads do not reset the imported baseline");
     return answer;
   });
-  await app.press("Import…");
+  await app.press("close-document");
   expect(app.shows("id:paste-input")).toBe(false);
   answer = "Discard changes";
-  await app.press("Import…");
+  await app.press("close-document");
+  expect(app.texts()).toContain("Rowtation");
+  expect(app.shows("id:paste-input")).toBe(false);
+  await app.press("Paste from clipboard");
   expect(app.shows("id:paste-input")).toBe(true);
 });
 

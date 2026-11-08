@@ -75,10 +75,8 @@ for (const [key, message] of [
   ["F7", "unsupported.xlsx: Choose a .csv, .tsv, .json, .ndjson, .jsonl or .xml file."],
   ["F4", "invalid-utf8.csv: INVALID_UTF8: Save the file as UTF-8 and try again."],
 ]) {
-  await app.press("More");
-  await app.press("Import…");
-  await app.press("Choose another file…");
-  await app.waitFor("Import “picked.csv”");
+  await app.keyboard.press("F8");
+  await app.waitFor("Import “dropped.tsv”");
   await app.keyboard.press(key);
   await app.waitFor(message);
   if (app.shows("app-dialog") || !app.texts().includes("00123")) throw new Error("Rejected file retained an importable draft or replaced the open document");
@@ -89,8 +87,8 @@ async function releaseRead() {
   await app.keyboard.press("F3");
   await app.wait(50);
 }
-await app.press("More");
-await app.press("Import…");
+await app.keyboard.press("F8");
+await app.waitFor("Import “dropped.tsv”");
 await app.keyboard.press("F2");
 await app.press("Cancel");
 await releaseRead();
