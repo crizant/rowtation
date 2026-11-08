@@ -275,12 +275,12 @@ test("closing or replacing a modified document asks before discarding it", async
 });
 
 test("copied search matches stay plain cell text", async () => {
-  const app = await open("./App.tsx", { width: 1280, height: 800, clipboard: "id,city\nb,Brisbane Brisbane\na,Sydney" });
+  const app = await open("./App.tsx", { width: 1280, height: 800, platform: "macos", clipboard: "id,city\nb,Brisbane Brisbane\na,Sydney" });
   await app.press("Paste from clipboard"); await app.press("Review import"); await app.press("Import document");
   await app.waitFor("2 rows · 2 columns");
   await app.press("Find"); await app.paste("find-input", { text: "Brisbane" });
-  await app.submit("find-input");
   await app.waitFor("1 of 2 matches");
+  await app.keyboard.press("tab");
   expect(app.count("id:search-highlight") > 0).toBe(true);
   await app.press("Brisbane Brisbane");
   await app.keyboard.press("mod+c");
