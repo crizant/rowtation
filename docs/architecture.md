@@ -253,8 +253,12 @@ padding. The inspector moves to a contextual panel below 900 points.
 
 NSH 0.4's web desktop backend draws a horizontal indicator even when the inner
 DataTable scroller disables it, alongside DataTable's bottom viewport scrollbar.
-`BrowserStyles.install(css)` installs/removes a scoped app stylesheet suppressing
-only the disabled inner indicator beneath `data-grid`. TSX owns that CSS; Rust
-only attaches it. This compatibility rule is tied to the resolved 0.4 DOM classes
-and should be checked visually when upgrading NSH. It does not modify the NSH runtime or disable
-scrolling. File contents never enter CSS, markup or executable code.
+That indicator is a DOM node with a very high `z-index`, and the open document
+is painted after Diagnostics, so the bar shows through the panel.
+`BrowserStyles.install(css)` installs/removes a scoped app stylesheet that gives
+the grid and the inspector scroller their own stacking context, places
+Diagnostics above the document, and suppresses only the disabled inner indicator
+beneath `data-grid`. TSX owns that CSS; Rust only attaches it. This compatibility rule
+is tied to the resolved 0.4 DOM classes and should be checked visually when
+upgrading NSH. It does not modify the NSH runtime or disable scrolling. File
+contents never enter CSS, markup or executable code.
