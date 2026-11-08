@@ -1,9 +1,10 @@
+import type { InputRef } from "nsh";
 import { Input as BaseInput } from "nsh/base";
 
 /** Consistent styled input; imported text is always literal text. */
-export function Input(props: { value: string; onChange: (value: string) => void; label: string; placeholder?: string; multiline?: boolean; testID?: string; autoFocus?: boolean; submitBehavior?: "submit" | "blurAndSubmit" | "newline"; onSubmit?: () => void; onKeyPress?: (key: string) => void }) {
-  return <BaseInput value={props.value} onChange={event => props.onChange(event.value)} accessibilityLabel={props.label}
-    submitBehavior={props.submitBehavior} autoFocus={props.autoFocus} onSubmit={() => props.onSubmit?.()} onKeyPress={e => props.onKeyPress?.(e.key)} placeholder={props.placeholder} multiline={props.multiline}
+export function Input(props: { value: string; onChange: (value: string) => void; label: string; placeholder?: string; multiline?: boolean; testID?: string; autoFocus?: boolean; submitBehavior?: "submit" | "blurAndSubmit" | "newline"; onSubmit?: () => void; onKeyPress?: (key: string) => void; selectedRange?: { start: number; end?: number }; ref?: (node: InputRef) => void }) {
+  return <BaseInput ref={props.ref} value={props.value} onChange={event => props.onChange(event.value)} accessibilityLabel={props.label}
+    submitBehavior={props.submitBehavior} autoFocus={props.autoFocus} onSubmit={() => props.onSubmit?.()} onKeyPress={e => props.onKeyPress?.(e.key)} selectedRange={props.selectedRange} placeholder={props.placeholder} multiline={props.multiline}
     scrollbar={props.multiline ? { mode: "always", vertical: { class: "absolute inset-y-0 right-0 w-2 p-0.5", thumbClass: "rounded-full bg-foreground/45 dark:bg-foreground/55" } } : false}
     autoCapitalize="none" autoCorrect={false} testID={props.testID}
     class={props.multiline

@@ -13,6 +13,9 @@ its formats or operations as supported in the README.
    row counts and a virtualized table. Verify keyboard and touch access.
 4. **Transformations (implemented):** Rust-owned sort and search, cell edits, scoped find/replace
    and clear dirty/error states. Test identity under searching and sorting.
+   Search still rejects a scoped payload above 64 MiB or more than 100,000 matches,
+   with no partial list, and runs on the calling thread. Widening that is engine
+   follow-up [issue #9](https://github.com/crizant/rowtation/issues/9), not an import cap.
 5. **Structured formats:** JSON and NDJSON, then XML with explicit mapping rules
    and visible loss warnings. Test missing, null, nested and mixed-type values.
 6. **Excel:** WASM-compatible readers/writers, worksheet selection, dates,

@@ -76,9 +76,13 @@ not-allowed cursor and suppress interaction.
 
 Editing uses an accessible dialog with a touch-sized Save cell action. Open it
 with a double-press, F2, or Edit cell in the cell menu. Clear cell is in that
-menu. Find opens a compact bar: the query and match navigation come first, and
-replacement and options stay closed until asked. Below 900 points the query
-keeps its own row so Replace… and Options do not shrink it. Matching cells use
-primary-token tint; active selection retains its dark border. Sort direction is
+menu. Find opens a compact bar: the query and match navigation come first.
+Case, regex, and all-columns or the selected column are compact toggles on
+that bar, and replacement stays closed until asked. Below 900 points the query
+keeps its own row so those controls do not shrink it. An empty query shows no
+count; a search in flight, no hits, and errors each have their own status.
+Matching cells use a primary-token tint, and the active occurrence is marked
+in the preview or named in the bar when it lies past that preview. Active
+selection retains its dark border. Sort direction is
 the table header's own indicator; press it again to reverse, and once more to
 restore imported order.

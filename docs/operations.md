@@ -21,10 +21,10 @@ are unaffected. An edit to the active sort column reapplies the current sort.
 ## Search and replacement
 
 Search visits all rows in current view order, then schema columns, then matches
-left to right within a cell. It does not filter rows. Scope is explicitly all
-columns or the column selected when “Selected column only” is enabled; navigation
-does not move that scope to another column. Hidden columns participate only in the
-explicit “All columns” scope. Headers, missing/null fields and booleans are not
+left to right within a cell. It does not filter rows. Scope is all columns, or
+the column selected when the find bar’s column control is pressed; later
+navigation does not move that scope. Hidden columns participate only in the
+all-columns scope. Headers, missing/null fields and booleans are not
 searched. Text and future canonical numbers are searchable.
 
 Literal search escapes all regex metacharacters. Case-insensitive matching uses
@@ -41,10 +41,21 @@ Search is bounded to 4096 pattern bytes, a 1 MiB compiled regex size and DFA cac
 64 MiB of scoped cell payload (every empty/absent scoped cell counts as one byte), and 100,000 matches.
 Exceeding a bound returns an error with no partial result count. The regex engine
 avoids catastrophic backtracking. Narrow the term/scope when a limit is reached.
+Raising those bounds, returning a partial list, or moving the scan off the calling
+thread is engine follow-up [issue #9](https://github.com/crizant/rowtation/issues/9),
+not an import cap.
 The retained match list stays in Rust; navigation transfers one match with stable
-row/column IDs, UTF-8 byte range and revision. Sorting/search edits invalidate the
-list; the UI searches again and reveals the first result. Multiple occurrences in
-a cell are separate navigation results; matching cells are highlighted in the grid.
+row/column IDs, UTF-8 byte range and revision. After a new query the UI reveals
+the first match. After replace, replace all, undo, redo, or a scope/case/regex
+change it keeps the same occurrence when that byte range still matches, and
+otherwise keeps the same index clamped to the new list. The counter and the grid
+selection both follow that choice. An empty query has no count; a search in
+flight says “Searching…”; no hits say “No matches”; an error shows the message
+and no count. Multiple occurrences in a cell are separate results. Matching
+cells are tinted. The active occurrence is marked in the preview, or named in
+the find bar when its bytes sit past the 512-byte preview. Cmd/Ctrl+F focuses
+the query and selects it. Enter and Shift+Enter move to the next and previous
+match. Escape closes Find and returns focus to the grid.
 
 Replacement always treats the replacement string literally, including `$1`, `$`,
 backslashes, newlines and Unicode. There is no capture expansion. “Replace” changes

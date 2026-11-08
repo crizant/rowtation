@@ -2,7 +2,7 @@ import { effect, platform, signal, Text, View, windowSize } from "nsh";
 import { DataTable, type DataTableRange, type DataTableRef, type DataTableSort, type DataTableSelection } from "nsh/base";
 import type { CellSnapshot, ColumnMetadata, DocumentMetadata, DocumentSession, RowWindow } from "rowtation/native";
 import { measuring, record, timeToNextFrame } from "./diagnostics";
-import { loadGridRows, PREVIEW_BYTES } from "./gridRowCache";
+import { loadGridRows, PREVIEW_BYTES, utf8Span } from "./gridRowCache";
 export { cellText, PREVIEW_BYTES } from "./gridRowCache";
 
 export interface CellSelection {
@@ -26,6 +26,7 @@ export function DataGrid(props: {
   onCellMenu: (rowIndex: number, columnIndex: number, x: number, y: number) => void;
   onReady: (focus: () => void) => void;
   onSelect: (selection: CellSelection | null, column: number | null) => void;
+  activeMatch?: { row: number; column: number; start: number; end: number } | null;
 }) {
   let visibleRows: DataTableRange = { start: 0, end: Math.min(32, props.metadata.rowCount) };
   // Start conservatively until the table reports its measured column range.
@@ -67,6 +68,8 @@ export function DataGrid(props: {
   }
   let table: DataTableRef | undefined;
   props.onReady(() => table?.focus());
+  const active = signal(props.activeMatch ?? null);
+  effect(() => { active.set(props.activeMatch ?? null); });
   effect(() => {
     props.version;
     cache.set(loadGridRows(null, props.metadata, props.columns, visibleRows, visibleColumns, fetch));
@@ -83,15 +86,33 @@ export function DataGrid(props: {
   // The table recalls a cell only when its text changes. Match tint is a binding
   // over the row cache, so copied values stay the plain field text.
   function GridCell(cell: { text: string; row: number; column: number }) {
-    const matched = () => {
+    const snap = () => {
       const current = cache();
-      return !!current.snapshot.rows[cell.row - current.snapshot.offset]?.cells[cell.column - current.snapshot.columnOffset]?.matched;
+      return current.snapshot.rows[cell.row - current.snapshot.offset]?.cells[cell.column - current.snapshot.columnOffset];
+    };
+    const matched = () => !!snap()?.matched;
+    const occurrence = () => {
+      const mark = active();
+      const preview = snap()?.text ?? "";
+      if (!mark || mark.row !== cell.row || mark.column !== cell.column) return null;
+      const split = utf8Span(preview, mark.start, mark.end);
+      return split?.hit ? split : null;
+    };
+    // Nested text is always present. Switching a cell between a plain string and a
+    // fragment drops the span, so the active occurrence stays a child of this text.
+    const parts = () => {
+      const split = occurrence();
+      if (!split) return { before: cell.text, hit: "", after: "" };
+      return { before: split.before, hit: split.hit, after: split.after + (snap()?.truncated ? "…" : "") };
     };
     return <View testID={matched() ? "search-highlight" : undefined}
       onLongPress={() => props.onCellMenu(cell.row, cell.column, 16, 120)}
       style={{ height: dense() ? 30 : 40, width: columnWidth() - 24 }}
       class={"justify-center rounded" + (matched() ? " bg-primary/15" : "")}>
-      <Text class="text-[13px] text-foreground line-clamp-1">{cell.text}</Text>
+      <Text class="text-[13px] text-foreground line-clamp-1">{parts().before}<Text
+        testID={parts().hit ? "active-match" : undefined}
+        class={parts().hit ? "rounded-sm bg-primary/50 text-foreground underline" : ""}
+        style={parts().hit ? { textDecorationLine: "underline" } : undefined}>{parts().hit}</Text>{parts().after}</Text>
     </View>;
   }
   return <DataTable renderCell={cell => <GridCell text={cell.text} row={cell.row} column={cell.column} />}

@@ -73,6 +73,8 @@ paint); and WebAssembly memory. They appear in the panel and console only. Nothi
 stress tests and a native benchmark (`ROWTATION_BENCH_MB`, default 64, or
 `ROWTATION_BENCH_ROWS` for an exact row count). Sort and search in that
 benchmark run synchronously on the calling thread. They are not an import-size cap.
+Search also stops, with no partial matches, above 64 MiB of scoped text or
+100,000 matches ([issue #9](https://github.com/crizant/rowtation/issues/9)).
 
 See [architecture and API contracts](docs/architecture.md) for Rust/TSX usage,
 identity, error and disposal rules.

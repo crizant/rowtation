@@ -4,6 +4,53 @@ import type { CellSnapshot, ColumnMetadata, DocumentMetadata, RowsSnapshot, RowW
 /** Grid cells show at most this many UTF-8 bytes; the inspector reads whole values on demand. */
 export const PREVIEW_BYTES = 512;
 
+function utf8Size(codePoint: number) {
+  if (codePoint <= 0x7f) return 1;
+  if (codePoint <= 0x7ff) return 2;
+  if (codePoint <= 0xffff) return 3;
+  return 4;
+}
+
+/** The longest prefix of at most `limit` UTF-8 bytes that ends on a character boundary. */
+export function utf8Prefix(text: string, limit = PREVIEW_BYTES) {
+  let bytes = 0;
+  let index = 0;
+  while (index < text.length) {
+    const codePoint = text.codePointAt(index)!;
+    const size = utf8Size(codePoint);
+    if (bytes + size > limit) break;
+    bytes += size;
+    index += codePoint > 0xffff ? 2 : 1;
+  }
+  return text.slice(0, index);
+}
+
+/** Split `text` on a UTF-8 byte range. Null when the range is outside the string or splits a character. */
+export function utf8Span(text: string, start: number, end: number) {
+  if (end < start || start < 0) return null;
+  let bytes = 0;
+  let index = 0;
+  let startIndex = -1;
+  while (index < text.length) {
+    if (bytes === start) startIndex = index;
+    else if (startIndex < 0 && bytes > start) return null;
+    const codePoint = text.codePointAt(index)!;
+    const next = index + (codePoint > 0xffff ? 2 : 1);
+    bytes += utf8Size(codePoint);
+    if (startIndex >= 0 && bytes === end) return { before: text.slice(0, startIndex), hit: text.slice(startIndex, next), after: text.slice(next) };
+    if (startIndex >= 0 && bytes > end) return null;
+    index = next;
+  }
+  if (startIndex >= 0 && bytes === end) return { before: text.slice(0, startIndex), hit: text.slice(startIndex), after: "" };
+  if (bytes === start && start === end) return { before: text, hit: "", after: "" };
+  return null;
+}
+
+/** Whether a match's byte range falls entirely inside the grid preview of `text`. */
+export function previewHolds(text: string, start: number, end: number) {
+  return utf8Span(utf8Prefix(text), start, end) != null;
+}
+
 export function cellText(cell: CellSnapshot): string {
   if (cell.kind === "missing") return "—";
   if (cell.kind === "null") return "null";

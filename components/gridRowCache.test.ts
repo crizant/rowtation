@@ -1,6 +1,6 @@
 import { expect, test } from "nsh/test";
 import type { DocumentMetadata, RowWindow, RowsSnapshot } from "rowtation/native";
-import { loadGridRows, PREVIEW_BYTES } from "./gridRowCache";
+import { loadGridRows, previewHolds, PREVIEW_BYTES, utf8Prefix, utf8Span } from "./gridRowCache";
 
 function fixture(rowCount = 2000) {
   const metadata: DocumentMetadata = { id: "synthetic", revision: 0, rowCount, columnCount: 40, dirty: false, delimiter: ",", headers: true };
@@ -110,6 +110,18 @@ test("grid cache ignores transient empty viewport ranges", () => {
   const visible = load(initial, 1500, 1524);
   expect(calls.length).toBe(2);
   expect(visible.data[1500 - visible.snapshot.offset]["0"]).toBe("r1500c0");
+});
+
+test("preview ranges split on UTF-8 boundaries and stop at 512 bytes", () => {
+  expect(utf8Span("Brisbane Brisbane", 0, 8)).toEqual({ before: "", hit: "Brisbane", after: " Brisbane" });
+  expect(utf8Span("Brisbane Brisbane", 9, 17)).toEqual({ before: "Brisbane ", hit: "Brisbane", after: "" });
+  expect(utf8Span("a😀b", 1, 5)).toEqual({ before: "a", hit: "😀", after: "b" });
+  expect(utf8Span("café", 3, 4)).toBe(null);
+  const filler = "x".repeat(PREVIEW_BYTES);
+  expect(utf8Prefix(`${filler}NEEDLE`)).toBe(filler);
+  expect(previewHolds(`${filler}NEEDLE`, PREVIEW_BYTES, PREVIEW_BYTES + 6)).toBe(false);
+  expect(previewHolds(`${"x".repeat(500)}NEEDLE`, 500, 506)).toBe(true);
+  expect(utf8Prefix("é".repeat(300)).length).toBe(256);
 });
 
 test("grid cache keeps search flags on the snapshot and out of the cell text", () => {
