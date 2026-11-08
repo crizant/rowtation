@@ -37,7 +37,7 @@ Empty search terms return zero matches, including in regex mode. Invalid regex
 produces an inline error and clears old results.
 
 Search is bounded to 4096 pattern bytes, a 1 MiB compiled regex size and DFA cache,
-64 MiB of scoped cell payload (every empty/absent scoped cell counts as one byte), and 100,000 matches.
+64 MiB of actual searchable UTF-8 payload (Text, numeric tokens and boolean spellings), and 100,000 matches. Missing and Null contribute no bytes; empty Text contributes zero bytes and still participates in zero-width regex matches. Sparse all-column search visits only stored entries in schema order; a scoped search reads only the selected column in each row. Dense CSV/TSV rows retain contiguous iteration.
 Exceeding a bound returns an error with no partial result count. The regex engine
 avoids catastrophic backtracking. Narrow the term/scope when a limit is reached.
 Raising those bounds, returning a partial list, or moving the scan off the calling

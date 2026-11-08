@@ -1,6 +1,6 @@
 //! Stable view ordering, bounded search and sparse transactional editing.
 use crate::{
-    document::{CellValue, Document},
+    document::{CellValue, Document, RowCells},
     error::EngineError,
 };
 use nsh_core::prelude::*;
@@ -193,11 +193,15 @@ impl Operations {
     ) -> Result<SearchResult, EngineError> {
         self.matches.clear();
         self.matching_cells.clear();
-        if let Some(c) = options.column_id
-            && !doc.columns().iter().any(|v| v.id() == c)
-        {
-            return Err(error("UNKNOWN_COLUMN", "Select a column."));
-        }
+        let column_index = options
+            .column_id
+            .map(|id| {
+                doc.columns()
+                    .iter()
+                    .position(|column| column.id() == id)
+                    .ok_or_else(|| error("UNKNOWN_COLUMN", "Select a column."))
+            })
+            .transpose()?;
         if options.term.is_empty() {
             return Ok(SearchResult::default());
         }
@@ -217,23 +221,22 @@ impl Operations {
             .map_err(|e| error("INVALID_REGEX", &e.to_string()))?;
         let mut found = Vec::new();
         let mut scanned = 0usize;
-        let columns: Vec<_> = doc
-            .columns()
-            .iter()
-            .filter(|c| options.column_id.is_none_or(|id| id == c.id()))
-            .collect();
         for (position, &index) in self.order.iter().enumerate() {
             let row = &doc.rows[index];
-            for column in &columns {
-                let value = text(doc.cell(row.id(), column.id())?);
-                scanned = scanned.saturating_add(value.map_or(1, |v| v.len().max(1)));
+            let mut scan = |column: usize, cell: &CellValue| -> Result<(), EngineError> {
+                let Some(value) = text(cell) else {
+                    return Ok(());
+                };
+                // Only bytes actually searched consume the payload budget. Null,
+                // Missing and implicit sparse gaps contribute nothing; empty Text
+                // is still searched (and zero-width matches have their own cap).
+                scanned = scanned.saturating_add(value.len());
                 if scanned > 64 * 1024 * 1024 {
                     return Err(error(
                         "SEARCH_LIMIT",
                         "Search scope exceeds 64 MiB. Select a smaller column.",
                     ));
                 }
-                let Some(value) = value else { continue };
                 for m in regex.find_iter(value) {
                     if found.len() >= MAX_MATCHES {
                         return Err(error(
@@ -243,12 +246,34 @@ impl Operations {
                     }
                     found.push(SearchMatch {
                         row_id: row.id(),
-                        column_id: column.id(),
+                        column_id: doc.columns()[column].id(),
                         start: m.start() as u32,
                         end: m.end() as u32,
                         revision: doc.revision(),
                         row_index: position as u32,
                     });
+                }
+                Ok(())
+            };
+            if let Some(column) = column_index {
+                // One direct dense lookup or one sparse binary search per row.
+                if let Some(value) = row.cells.get(column) {
+                    scan(column, value)?;
+                }
+            } else {
+                match &row.cells {
+                    RowCells::Dense(values) => {
+                        for (column, value) in values.iter().enumerate() {
+                            scan(column, value)?;
+                        }
+                    }
+                    RowCells::Sparse(values) => {
+                        // Sparse entries are stored in schema order. Never walk
+                        // the schema or materialize Missing cells for this row.
+                        for (column, value) in values {
+                            scan(*column, value)?;
+                        }
+                    }
                 }
             }
         }
@@ -535,6 +560,68 @@ mod tests {
     use super::*;
     fn compare(a: &CellValue, b: &CellValue) -> Ordering {
         compare_keyed(a, b, numeric_key(a).as_ref(), numeric_key(b).as_ref())
+    }
+    #[test]
+    fn search_budget_counts_searchable_payload_only_at_the_boundary() {
+        use crate::document::{Column, Row};
+        for sparse in [false, true] {
+            let values = vec![
+                CellValue::Text("x".repeat(64 * 1024 * 1024)),
+                CellValue::Missing,
+                CellValue::Null,
+                CellValue::Text(String::new()),
+                CellValue::Boolean(false),
+            ];
+            let cells = if sparse {
+                RowCells::Sparse(
+                    values
+                        .into_iter()
+                        .enumerate()
+                        .filter(|(_, value)| *value != CellValue::Missing)
+                        .collect(),
+                )
+            } else {
+                RowCells::Dense(values)
+            };
+            let columns = (1..=5)
+                .map(|id| Column {
+                    id,
+                    name: id.to_string(),
+                    original_name: None,
+                })
+                .collect();
+            let mut doc = Document::new(columns, vec![Row { id: 1, cells }], b',', false).unwrap();
+            let mut ops = Operations::default();
+            ops.sort(&doc, None, false).unwrap();
+            let options = |column| SearchOptions {
+                term: "false".into(),
+                column_id: column,
+                ..Default::default()
+            };
+            assert_eq!(ops.search(&doc, options(Some(5))).unwrap().count, 1);
+            assert_eq!(
+                ops.search(&doc, options(None)).err().unwrap().code(),
+                "SEARCH_LIMIT"
+            );
+            assert!(ops.matches.is_empty());
+            assert!(ops.matching_cells.is_empty());
+            doc.rows[0].cells.set(4, CellValue::Missing);
+            // Exactly 64 MiB remains: gaps, Null and empty Text must add no bytes.
+            assert_eq!(ops.search(&doc, options(None)).unwrap().count, 0);
+            assert_eq!(
+                ops.search(
+                    &doc,
+                    SearchOptions {
+                        term: "^$".into(),
+                        regex: Some(true),
+                        ..Default::default()
+                    }
+                )
+                .unwrap()
+                .count,
+                1
+            );
+        }
     }
     #[test]
     fn numeric_sort_parses_each_key_once() {

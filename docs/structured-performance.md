@@ -96,3 +96,53 @@ Focused validation after the fixes: 53 affected Rust tests, seven headless
 structured UI tests and the same seven Chromium tests passed. Formatting,
 `nsh check`, `nsh build`, desktop/mobile visual inspection and web packaging
 passed. The whole application test suite was not rerun for this review follow-up.
+
+## Sparse search follow-up
+
+Search now iterates sparse stored entries in schema order instead of looking up
+all schema columns in every row. A column-scoped search does one lookup per row;
+dense CSV/TSV rows retain contiguous iteration. The 64-MiB budget counts only
+searchable UTF-8 bytes. Missing/Null add nothing, and empty Text remains searchable
+for zero-width regex matches while adding zero bytes. Match order, identities,
+highlighting and replacement transactions are unchanged.
+
+The focused benchmark is `tests/search_performance.rs`. On the same Apple M4 and
+Rust/native release setup described above, compare the previous PR revision
+`9b38f87` with this search fix. Each table entry is the median of 15 measurements
+(five searches in each of three sequential process runs). No timing assertions
+or new dependencies were added.
+
+| Search | Before | After |
+| --- | ---: | ---: |
+| 10k sparse rows / 10k columns, absent term | 169.368 ms, false SEARCH_LIMIT | 0.270 ms, 0 matches |
+| Same sparse data, matching term | 170.162 ms, false SEARCH_LIMIT | 0.523 ms, 10,000 matches |
+| Same sparse data, one column | 0.206 ms, 1 match | 0.083 ms, 1 match |
+| 100k-row CSV, all columns, absent term | 4.411 ms | 4.291 ms |
+| 100k-row CSV, all columns, 100k matches | 8.108 ms | 8.171 ms |
+| 100k-row CSV, scoped, 100k matches | 6.253 ms | 6.354 ms |
+| 100k-row TSV, all columns, absent term | 4.373 ms | 4.218 ms |
+| 100k-row TSV, all columns, 100k matches | 8.025 ms | 7.932 ms |
+| 100k-row TSV, scoped, 100k matches | 6.181 ms | 6.050 ms |
+
+The sparse fixture has only 60,000 searchable bytes, one six-byte value per row.
+The baseline all-column searches incorrectly charged implicit Missing cells and
+failed before completing; their timings do not represent successful searches of
+the whole dataset. Dense control results show no material performance regression;
+the small timing differences are within observed run variation. These native
+measurements are not browser responsiveness guarantees.
+
+```sh
+cargo test --test sparse_search --test operations
+cargo test --lib search_budget_counts_searchable_payload_only_at_the_boundary
+cargo test --release --test search_performance -- --ignored --nocapture --test-threads=1
+```
+
+For comparison, copy the same benchmark into a detached `9b38f87` worktree and
+set `ROWTATION_SEARCH_BASELINE=1` for that version. The flag records the known
+SEARCH_LIMIT failure instead of failing the benchmark; production code is
+unchanged. Fresh-process repeats can use Cargo's printed benchmark executable.
+
+Validation for this follow-up: 17 focused Rust tests passed (including exact
+64-MiB payload boundaries for dense and sparse rows), as did seven headless and
+seven Chromium structured UI tests. Formatting, NSH check/build and web packaging
+passed. The full application suite was not rerun; no UI layout was changed.
