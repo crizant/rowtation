@@ -1,8 +1,5 @@
 # Two-million-row scrolling investigation
 
-For the later PR #8 renderer regression and its fix, see
-[PR #8 grid scrolling regression](pr8-scroll-performance.md).
-
 Measured on 2026-11-08. PR #6 reduced bridge work, but the main inertia-end
 stutter is NSH 0.4.0 desktop scroll motion, not a long Rust row fetch. A separate
 Inspector bug caused a real 127–160 ms main-thread pause. This change fixes that
@@ -199,3 +196,91 @@ opt-in stress tests skipped), all 18 browser tests, and `nsh package --target we
 -o dist` passed. The generated fixture's checksum was independently regenerated.
 The production Inspector screenshot showed the correct 2,000,000 unique IDs and
 five common values after scrolling.
+
+
+## Custom cell renderer regression (PR #8)
+
+A later comparison uses main (`67a0344`), PR #8 (`4d2dfff`), that PR with only
+DataTable's `renderCell` prop temporarily removed, and the fix (`97a029b`). All
+use the same two-million-row CSV, toolchain, browser settings and wheel protocol
+above. Rust operations, cache size, row height and NSH dependencies are unchanged.
+
+PR #8 installed custom TSX cells even with Find closed. Each cell created a View,
+outer Text and nested Text span. Multiple text/style/test-ID bindings read the
+whole `cache()` through `snap()` and `parts()`, so refills invalidated bindings
+across visible cells, including unchanged overlaps. `parts()` repeated preview
+splitting and object creation for its bindings. The native renderer updates
+retained text without a per-cell callback into JS.
+
+Removing just `renderCell` restored scrolling to main's range. Separate
+instrumented grid-only phases made five row-window calls in each baseline:
+9.6 ms total on main, 8.6 ms on PR #8, and 10.2 ms with the renderer disabled.
+Native component-prop application took 3.6, 2.8 and 3.2 ms respectively. These
+inclusive bridge timings do not explain the regression. Initial mounted nodes
+fell from 1,030 to 599 with the renderer disabled or fixed. This A/B isolates the
+aggregate custom-renderer path; it does not assign separate percentages to
+callback, nested-text, layout and reactive-invalidation costs.
+
+The fix uses native text on pointer desktops when the bounded cached window has
+no matching cells. A memoized boolean and stable callback avoid resetting the
+renderer prop on refills. Custom cells memoize their snapshot and active
+occurrence, preserving overlapping snapshot identity and checking coordinates
+before reading a preview. Plain custom cells have one Text; only the active
+occurrence creates nested Text, in a separate complete Text branch. The existing
+touch long-press wrapper and table-level selection, double-press, context-menu
+and plain clipboard behavior remain in place.
+
+Three fresh-browser timing runs per variant alternate main → PR → disabled →
+fixed, without method wrappers, CPU sampling or trace recording. Import, startup
+and the later Inspector phase are excluded. These are host-specific observations,
+not portable FPS gates.
+
+| Grid only, median of three runs | main | PR #8 | Renderer disabled | Fixed |
+| --- | ---: | ---: | ---: | ---: |
+| Frame interval p50, ms | 16.7 | 16.6 | 16.7 | 16.6 |
+| Frame interval p95, ms | 20.0 | 26.6 | 19.1 | 19.7 |
+| Largest frame, ms | 31.9 | 57.8 | 36.0 | 36.8 |
+| Frames over 25 ms | 2 | 19 | 2 | 3 |
+
+The fix reduces p95 by about 26% and frames over 25 ms from 19 to 3. It restores
+performance to main's range; the small differences among main, disabled and fixed
+do not establish a further improvement. Occasional missed frames remain.
+
+The probe's optional `--search` workload selects the ID column, enables regex,
+and searches `00$`: 20,000 matches, one every 100 rows, within a 14 MB scope.
+Query execution and initial profiling finish before measurement. Search reduces
+the grid viewport to 587 px; compare these runs only with each other.
+
+| Highlighted ID search, median of three runs | PR #8 | Fixed |
+| --- | ---: | ---: |
+| Frame interval p95, ms | 25.3 | 24.3 |
+| Largest frame, ms | 54.1 | 52.2 |
+| Frames over 25 ms | 17 | 16 |
+
+These small changes do not establish a substantial improvement with highlights
+active. The confirmed win is avoiding custom rendering when highlighting is not
+needed. Reproduce with the package/probe commands above, adding `--search` for
+this workload. Package detached worktrees at the comparison SHAs for baselines;
+for isolation remove only `renderCell`, package, then restore it. Use separate
+`--instrument --trace --cpu` runs for attribution and keep generated data,
+recordings and screenshots outside tracked source.
+
+Validation: `cargo fmt --check`, `nsh check`, `nsh build`, nine existing grid-cache
+tests, three new headless grid tests, and both browser grid tests pass. The browser
+command is `nsh test components/DataGrid.test.tsx --target web --filter 'grid pointer'`.
+The focused tests cover native/no-result rendering, highlight switches, occurrence
+underlines, plain copy, keyboard selection, double-click editing, distant cache
+jumps with Unicode, and headless touch long-press with and without highlights.
+Desktop/mobile screenshots were visually inspected, including the second
+occurrence, closed Find/native rendering, selection and the mobile editor.
+`nsh package --target web -o dist` passes. No stress tests or unrelated suites were
+run for this renderer change; Rust data logic is unchanged.
+
+Pre-existing browser limitation: the cell-menu long-press check fails on both
+unchanged PR #8 and the fix. This was reproduced with `app.longPress` and with
+production packages using mobile viewport/touch emulation and CDP touch-start →
+1,000 ms hold → touch-end. Body cells have pointer events disabled and the NSH
+hit layer owns physical input. Headless dispatch reaches the retained custom
+cell handler and passes. This change preserves that handler and does not claim
+to fix NSH's hit layer. The scaled-scroll tiny-delta holds described above also
+remain.
