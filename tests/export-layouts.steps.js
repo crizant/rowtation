@@ -1,0 +1,17 @@
+await app.setViewport(1280, 800);
+await app.setColorScheme("light");
+await app.press("Paste from clipboard");
+await app.paste("paste-input", {text:'[{"id":"00123","customer":{"name":"Mia Chen"},"items":[{"sku":"RW-104"}],"amount":128.40},{"id":"00124","customer":{"name":"Oliver Smith"},"items":[],"amount":56.00}]'});
+await app.press("Review import"); await app.press("Import document");
+await app.press("Export…");
+await app.screenshot("docs/screenshots/export-desktop.png");
+await app.setColorScheme("dark");
+await app.screenshot("docs/screenshots/export-desktop-dark.png");
+await app.setColorScheme("light"); await app.setViewport(390,844);
+await app.screenshot("docs/screenshots/export-mobile.png");
+await app.press("TSV · TSV");
+await app.screenshot("docs/screenshots/export-mobile-warning.png");
+await app.setViewport(320,568);
+await app.screenshot("docs/screenshots/export-small.png");
+await app.setColorScheme("dark");
+await app.screenshot("docs/screenshots/export-small-dark.png");

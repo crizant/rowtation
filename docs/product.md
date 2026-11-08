@@ -5,7 +5,7 @@
 Rowtation converts structured data in the browser. The workflow is import →
 inspect → transform → export. The Rust document core and CSV/TSV
 parser/serializer and CSV/TSV import/inspection are implemented. Sorting, search, editing, find/replace and bounded undo/redo are implemented;
-JSON, NDJSON and tabular XML imports are also implemented; Excel and download workflows remain planned. See [structured import rules](structured-imports.md). See the
+JSON, NDJSON and tabular XML imports are also implemented; five-format export, download and copy are implemented. See [structured import rules](structured-imports.md). See the
 architecture for the implemented value, header, delimiter and resource policies.
 
 ## Implemented import and inspection
@@ -19,12 +19,6 @@ architecture for the implemented value, header, delimiter and resource policies.
   empty, null and missing counts, five common values, source settings and selection.
 - In-memory active document only. No recent history or persistence; closing/replacing it
   disposes its retained Rust session. No upload or backend.
-
-## Planned import extensions
-
-- Excel remains planned. Proposed Excel input scope is
-  `.xlsx` and `.xls`; verify crate and WASM support before promising either.
-- Offer worksheet selection for workbooks with multiple sheets.
 
 ## Implemented table operations
 
@@ -40,16 +34,14 @@ architecture for the implemented value, header, delimiter and resource policies.
 See [operation semantics and limits](operations.md) for exact matching, sorting,
 replacement and history behavior.
 
-## Planned export
+## Implemented export
 
-- Choose output format, filename and options; download the serialized bytes.
-- Target CSV, TSV, JSON, NDJSON, XML and Excel output. Excel output starts with
-  `.xlsx`; legacy `.xls` export is undecided and must not be advertised yet.
-- Make export scope explicit: complete dataset or current filtered view.
-- Explain lossy mappings before export; do not silently discard nested values,
-  additional worksheets, types or unsupported fields.
-- Keep numeric precision and text such as leading-zero identifiers intact unless
-  the user explicitly requests conversion.
+CSV, TSV, JSON, NDJSON and supported XML output, original/current sorted order,
+explicit mapping warnings, formula-safe delimited text, filename, download and
+copy. Search is highlighting, not filtering. Export keeps dirty state and history.
+See [conversion policies and limitations](export.md).
+
+Excel remains a possible future feature only.
 
 ## Data policy and constraints
 
@@ -70,8 +62,6 @@ replacement and history behavior.
 
 - Structured import mapping and type rules are specified in structured-imports.md.
 - Header detection, encodings, delimiters and malformed-row recovery.
-- Excel dates, formulas versus cached values, multiple sheets and precision.
-- Export ordering for formats that are not implemented yet.
 - Persistence is not a current commitment. Search, sort, replacement and undo
   behavior is specified in operations.md.
 

@@ -29,9 +29,8 @@ reduce opacity and suppress interaction. No motion is needed for this starter.
 Make import → inspect the primary workflow. Keep the virtualized table at the
 center, with a compact toolbar for opening another document. Keep headers and
 selected-cell identity stable under scrolling. Sort from the column header.
-Find, undo, and redo stay in the document toolbar. Export belongs to a later
-milestone, so closing or replacing a modified document asks before the changes
-are dropped.
+Find, undo, and redo stay in the document toolbar. Export… opens a compact five-format dialog. Closing or replacing a modified
+document still asks before the changes are dropped, even after export.
 
 Provide file selection and paste as alternatives to drag and drop. Keep the
 format, name and row/column counts visible. Show parsing errors near their source;
@@ -49,7 +48,7 @@ history. The privacy note is concise and mentions large-file confirmation.
 The document toolbar contains a labeled back action, the filename, and a
 "CSV · UTF-8" badge, then Find, Undo, Redo, and a More menu. Below 900 points
 the format sits on a second line under the filename so the name keeps the
-width. Import… lives in the menu. Column info and Import… also sit in an
+width. Import… lives in the menu. Column info, Import… and Export… sit in an
 action bar below the grid, never floating over rows.
 The table owns its scrolling region. Keep the status bar outside it and prevent
 horizontal page overflow. On desktop, an independent scrolling inspector sits in
@@ -68,7 +67,9 @@ Escape/backdrop dismissal and semantic NSH focus behavior. Mobile padding
 includes a base 20-point inset plus the browser safe area.
 
 Show implemented search, replace, sorting, editing, undo and modification counts.
-Do not show export until it exists, and do not draw fake window controls. CSV/TSV values get Text indicators; numeric/date inference would
+Use the shared dialog for export, with format cards, contextual options, mapping
+warnings and Copy/Cancel/Download actions. Keep the body scrollable and the
+actions visible on mobile. Do not draw fake window controls. CSV/TSV values get Text indicators; numeric/date inference would
 misrepresent the engine. An inspector distinguishes empty text, Null and Missing and reports canonical type counts. Structured format settings follow docs/structured-imports.md.
 
 Clickable buttons and checkboxes use a pointer cursor; disabled controls use a

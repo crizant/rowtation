@@ -1,4 +1,5 @@
 //! Rust-owned document engine, registered with NSH as `rowtation/native`.
+pub mod browser_export;
 pub mod browser_import;
 pub mod browser_styles;
 pub mod diagnostics;

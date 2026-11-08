@@ -152,6 +152,30 @@ jobs:
         if: matrix.suite == 'browser'
         run: nsh package --target web -o dist
 
+      - name: Prepare Node for production-package checks
+        if: matrix.suite == 'browser'
+        uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+
+      - name: Verify production downloads and clipboard
+        if: matrix.suite == 'browser'
+        run: node scripts/test-export-package.mjs --build dist/Rowtation --browser /usr/bin/google-chrome
+
+      - name: Capture export dialogs
+        if: matrix.suite == 'browser'
+        run: |
+          mkdir -p docs/screenshots
+          nsh test App.tsx --target web --browser /usr/bin/google-chrome < tests/export-layouts.steps.js
+
+      - name: Upload export dialog screenshots
+        if: matrix.suite == 'browser' && always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: export-dialog-screenshots
+          path: docs/screenshots/export-*.png
+          if-no-files-found: warn
+
       - name: Record cache results
         env:
           NSH_CACHE_HIT: ${{ steps.nsh-cache.outputs.cache-hit }}

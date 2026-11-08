@@ -260,7 +260,7 @@ test("closing or replacing a modified document asks before discarding it", async
   let answer = "Keep editing";
   app.onDialog(dialog => {
     expect(dialog.title).toBe("Discard unsaved changes?");
-    expect(dialog.message ?? "").toContain("cannot export");
+    expect(dialog.message ?? "").toContain("Downloads do not reset the imported baseline");
     return answer;
   });
   await app.press("close-document");
@@ -338,7 +338,7 @@ test("mobile find keeps the query separate from replacement", async () => {
   await app.waitFor("1 modified · Unsaved");
   let answer = "Keep editing";
   app.onDialog(dialog => {
-    expect(dialog.message ?? "").toContain("cannot export");
+    expect(dialog.message ?? "").toContain("Downloads do not reset the imported baseline");
     return answer;
   });
   await app.press("Import…");

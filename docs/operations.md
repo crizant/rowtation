@@ -3,7 +3,7 @@
 All values, view ordering, matching, transactions and column statistics live in
 Rust/WASM. The UI retains bounded row previews and transient drafts. Operations
 are synchronous on the browser thread; search input is debounced, not moved to a
-worker. No recent history, persistence, download UI is added.
+worker. No recent history or persistence is added. See [export](export.md) for downloads and conversion.
 
 ## Sorting
 
@@ -90,10 +90,9 @@ A sparse map retains the imported value only for cells currently differing from
 import. Its size is the modified-cell count. Restoring a value, directly or with
 undo/redo, removes that difference; undo history eviction does not reset the dirty
 baseline. Source bytes/quote style are not duplicated. Undo restores Missing tails
-and serialization round trips as well as values. There is no save/export workflow;
+and serialization round trips as well as values. Export does not reset the imported baseline;
 “Unsaved” means the active in-memory document differs from import. Closing or
-replacing a modified document asks first and says that Rowtation cannot export
-or download it yet. Confirming discards the changes and releases the session.
+replacing a modified document still asks first after export. Confirming discards the changes and releases the session.
 An unmodified document closes immediately. See [structured import type and reconstruction rules](structured-imports.md).
 
 Search and sort run synchronously on the calling thread, including in the browser,

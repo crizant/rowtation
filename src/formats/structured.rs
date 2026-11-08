@@ -11,7 +11,7 @@ use serde_json::value::RawValue;
 use std::{collections::HashMap, fmt};
 
 /// Reconstruction tree. Cell references are stable column IDs within each row.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Shape {
     Cell(u32),
     Object(Vec<(String, Shape)>),
@@ -31,7 +31,7 @@ pub struct Structure {
     pub xml_root: Option<Shape>,
 }
 
-struct Fields<'a>(Vec<(String, &'a RawValue)>);
+pub(crate) struct Fields<'a>(pub(crate) Vec<(String, &'a RawValue)>);
 impl<'de> Deserialize<'de> for Fields<'de> {
     fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
         struct V;
@@ -272,7 +272,8 @@ pub fn parse(input: &[u8], format: &str) -> Result<Document, EngineError> {
     builder.finish(format, envelope, None)
 }
 fn expanded(ns: Option<&str>, name: &str) -> String {
-    ns.map_or_else(|| name.into(), |ns| format!("{{{ns}}}{name}"))
+    ns.filter(|ns| !ns.is_empty())
+        .map_or_else(|| name.into(), |ns| format!("{{{ns}}}{name}"))
 }
 fn xml(text: &str) -> Result<Document, EngineError> {
     // roxmltree accepts a UTF-8 str and ignores declaration encodings. Reject a

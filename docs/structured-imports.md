@@ -71,11 +71,10 @@ are assigned once, and the source format is reported by session metadata. A Rust
 retain keys/order, arrays retain length/order (including empty arrays), and leaves
 reference stable column IDs; values are stored only in canonical cells. XML also
 retains its wrapper. Column paths and original per-row shapes together describe
-where newly edited Missing cells belong. Future reconstruction must explicitly
+where newly edited Missing cells belong. Reconstruction must explicitly
 resolve incompatible insertions, e.g. a new child below an existing scalar; it
-must never silently discard a cell. No reconstruction/export implementation or
-export UI is added in this milestone. Existing session serialization rejects
-structured documents with `LOSSY_EXPORT` to avoid implying a safe conversion.
+must never silently discard a cell. Multi-format reconstruction and explicit conversion policies are implemented in
+the export milestone; see [export policies](export.md).
 
 Sorting uses existing canonical type order and exact decimal comparison. Search
 and replacement cover Text, numeric tokens and boolean spellings (`true`/`false`);

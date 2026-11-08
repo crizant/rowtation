@@ -71,7 +71,8 @@ Verified on 2026-11-08 with NSH 0.4.0 and Chrome for Testing:
 ## Limits
 
 CSV/TSV values remain literal Text. There is no numeric/date inference, automatic
-header inference, document history, persistence, or export/download UI. Sorting,
+header inference, document history or persistence. Export supports five formats
+with explicit policies; see [export](export.md). Sorting,
 search, cell editing, literal replacement and bounded undo/redo stay in the
 active in-memory document. The existing internal serializer remains available to
 Rust callers.

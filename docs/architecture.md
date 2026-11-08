@@ -10,7 +10,7 @@ Rust owns the document, all format parsing/serialization and resource validation
 TSX owns presentation and transient focus, selection, dialogs and editing drafts.
 Returned snapshots may be mirrored in UI signals; they are not a second dataset.
 The import UI, virtualized inspection table and Rust data operations are implemented.
-JSON, NDJSON and tabular XML adapters are implemented; Excel and browser downloads remain planned. See [structured mapping and reconstruction metadata](structured-imports.md).
+JSON, NDJSON and tabular XML adapters are implemented; multi-format exports and browser downloads are implemented. See [export policies](export.md). See [structured mapping and reconstruction metadata](structured-imports.md).
 
 See the [data operations contract](operations.md) for ordering, matching,
 revisions, dirty state, mutation methods and resource limits.
@@ -96,7 +96,7 @@ if (window.rows.length && columns.length) {
   const cell = session.readCell(window.rows[0].id, columns[0].id);
 }
 const output = session.serialize({ delimiter: ",", headers: true });
-// output is Uint8Array; download UI is a later milestone.
+// output is Uint8Array; explicit format/options enable multi-format conversion.
 ```
 
 | API | Contract |
@@ -113,7 +113,7 @@ const output = session.serialize({ delimiter: ",", headers: true });
 | `columns(): ColumnMetadata[]` | Ordered `{ id, name, originalName }`; originalName is null for generated columns. |
 | `rows({ offset, limit, columnOffset?, columnLimit?, previewBytes?, measure? }): RowsSnapshot` | `{ documentId, revision, offset, columnOffset, rows: [{ id, cells }], rustMs }`; `rustMs` is set only when `measure` is true: Rust's own build time, excluding the copy into JS; cells follow schema order from columnOffset, including missing trailing values. Without previewBytes whole text/number values are copied; with it each value is cut to that many UTF-8 bytes on a character boundary and marked `truncated`. `byteLength` is always the whole length. `matched` marks cells in the active search. At most 256 rows; offsets are positions, not IDs. |
 | `readCell(rowId: number, columnId: number): CellSnapshot` | Full value using document-scoped IDs obtained from `rows()`/`columns()`. `{ kind, text, boolean, number, byteLength, truncated, matched }` (never truncated). Only the payload for kind is populated, others null. `kind` is `missing`, `null`, `text`, `boolean` or `number`. |
-| `serialize(options: ExportOptions): Uint8Array` | Optional delimiter/headers default to source settings. Whole document only; no filtered export or download. |
+| `serialize(options: ExportOptions): Uint8Array` | Optional delimiter/headers default to source settings. Whole document, original or current sorted order. See export.md for format, conversion and download APIs. |
 | `sort(columnId, descending): void` | Stable view order; null column resets. Does not change data revision. |
 | `search(options): SearchResult` / `searchMatch(index)` / `searchIndex(rowId, columnId, start, hint)` / `searchSnippet(index, previewBytes)` | Retain scoped occurrence IDs/ranges in Rust. Return the count and one navigable match. `searchIndex` finds a retained occurrence in one call. `searchSnippet` returns that slice, or empty when it sits inside the preview, at most 512 bytes. |
 | `editCell(rowId, columnId, text, revision)` | Literal text commit using stable IDs and expected revision; same-value commits are no-ops. |
@@ -210,7 +210,7 @@ Verify `cargo fmt --check`, `nsh check`, `nsh build`, `nsh test`,
 package verifies the in-memory csv dependency path compiles to wasm32; browser
 smoke tests verify runtime compatibility. The large-input thresholds are not
 large-file responsiveness benchmarks. Measure representative browsers before
-adding workers. Safe download policy and structured export remain later work. Browser file and layout regressions run through the synthetic host
+adding workers. Safe-text policy and structured export are described in export.md. Browser file and layout regressions run through the synthetic host
 used by scripts/test-browser-files.sh.
 
 ## Import and inspection UI
@@ -273,3 +273,13 @@ beneath `data-grid`. TSX owns that CSS; Rust only attaches it. This compatibilit
 is tied to the resolved 0.4 DOM classes and should be checked visually when
 upgrading NSH. It does not modify the NSH runtime or disable scrolling. File
 contents never enter CSS, markup or executable code.
+
+## Export integration
+
+`formats/export.rs` serializes from canonical cells and retained per-row shapes.
+`ExportOptions` adds format, sorted, pretty, reconstruct, safeText and allowLossy.
+`exportWarning(options)` exposes explicit mapping policies; `serializeText` returns
+final text for Clipboard. `download(name, options)` creates a local Blob using
+`browser_export.rs`, returns a sanitized filename and schedules URL cleanup.
+TSX drives these registered APIs from the press handler. See [export.md](export.md)
+for precision, ambiguity, namespace, lifecycle and resource contracts.
