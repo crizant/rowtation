@@ -80,6 +80,8 @@ fn error(code: &'static str, message: &str) -> EngineError {
 fn text(value: &CellValue) -> Option<&str> {
     match value {
         CellValue::Text(s) | CellValue::Number(s) => Some(s),
+        CellValue::Boolean(true) => Some("true"),
+        CellValue::Boolean(false) => Some("false"),
         _ => None,
     }
 }
@@ -266,6 +268,11 @@ impl Operations {
     ) -> Result<MutationResult, EngineError> {
         self.check(doc, revision)?;
         let before = doc.cell(row, column)?.clone();
+        let after = if text(&before) == Some(value.as_str()) {
+            before.clone()
+        } else {
+            CellValue::Text(value)
+        };
         self.commit(
             doc,
             vec![Change {
@@ -277,7 +284,7 @@ impl Operations {
                     .unwrap_or(&before)
                     .clone(),
                 before,
-                after: CellValue::Text(value),
+                after,
             }],
             0,
         )
@@ -368,7 +375,11 @@ impl Operations {
                 start = m.end as usize;
             }
             value.push_str(&before[start..]);
-            change.after = CellValue::Text(value);
+            change.after = if value == before {
+                change.before.clone()
+            } else {
+                CellValue::Text(value)
+            };
         }
         self.commit(doc, changes, count)
     }

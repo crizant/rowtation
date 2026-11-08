@@ -2,6 +2,7 @@
 // registered Rust browser adapter; this module is never shipped in the app.
 export function createHost() {
   const pending = [];
+  let pickStructured = false;
   const fixture = (name, text) => new File([text], name, { type: 'text/csv' });
   // Each slice the app reads waits for F3, so tests control when reads finish.
   const delayed = (name, text) => {
@@ -20,11 +21,13 @@ export function createHost() {
     if (!(input instanceof HTMLInputElement) || input.id !== 'rowtation-file-input') return;
     event.preventDefault(); // Supply a synthetic choice instead of an OS dialog.
     const files = new DataTransfer();
-    files.items.add(fixture('picked.csv', 'id,city,a,b,c,d,e\n00123,Brisbane,1,2,3,4,5\n00234,Sydney,6,7,8,9,10'));
+    files.items.add(pickStructured ? fixture('picked.json', '[{"name":"Mia","n":900719925474099312345}]') : fixture('picked.csv', 'id,city,a,b,c,d,e\n00123,Brisbane,1,2,3,4,5\n00234,Sydney,6,7,8,9,10'));
+    pickStructured = false;
     input.files = files.files;
     queueMicrotask(() => input.dispatchEvent(new Event('change', { bubbles: true })));
   }, true);
   document.addEventListener('keydown', event => {
+    if (event.key === 'F11') { event.preventDefault(); pickStructured = true; return; }
     if (event.key === 'F3') {
       event.preventDefault();
       const read = pending.shift();
@@ -32,10 +35,14 @@ export function createHost() {
       read();
       return;
     }
-    if (!['F2', 'F4', 'F6', 'F7', 'F8', 'F9', 'F10'].includes(event.key)) return;
+    if (!['F2', 'F4', 'F6', 'F7', 'F8', 'F9', 'F10', 'F12', 'F5'].includes(event.key)) return;
     event.preventDefault();
     const dataTransfer = new DataTransfer();
-    if (event.key === 'F2') {
+    if (event.key === 'F12') {
+      dataTransfer.items.add(fixture('dropped.xml', '<rows><row id="001"><name>Hana</name></row></rows>'));
+    } else if (event.key === 'F5') {
+      dataTransfer.items.add(fixture('dropped.ndjson', '{"name":"Mia"}\n\n{"city":"Brisbane"}'));
+    } else if (event.key === 'F2') {
       dataTransfer.items.add(delayed('delayed.csv', 'name\nDelayed'));
     } else if (event.key === 'F6') {
       // 9,000,003 bytes: past the 8 MiB confirmation threshold, read in one slice.
@@ -43,7 +50,7 @@ export function createHost() {
     } else if (event.key === 'F4') {
       dataTransfer.items.add(fixture('invalid-utf8.csv', new Uint8Array([255])));
     } else if (event.key === 'F7') {
-      dataTransfer.items.add(fixture('unsupported.json', '{"name":"Mia"}'));
+      dataTransfer.items.add(fixture('unsupported.xlsx', 'unsupported'));
     } else if (event.key === 'F10') {
       dataTransfer.items.add(fixture('broken.csv', 'name,city\n"unclosed'));
     } else {

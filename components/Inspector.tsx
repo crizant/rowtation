@@ -35,6 +35,7 @@ export function Inspector(props: {
         <Stat label="Type" value={props.profile?.kind ?? "Text"} />
         <Stat label="Unique values" value={(props.profile?.uniqueCount ?? 0).toLocaleString()} />
         <Stat label="Empty values" value={(props.profile?.emptyCount ?? 0).toLocaleString()} />
+        <Stat label="Null values" value={(props.profile?.nullCount ?? 0).toLocaleString()} />
         <Stat label="Missing fields" value={(props.profile?.missingCount ?? 0).toLocaleString()} />
       </View>
       <Section title="Most common" />
@@ -67,8 +68,8 @@ export function Inspector(props: {
       </If>
     </If>
     <Section title="Source" />
-    <Stat label="Format" value={props.metadata.delimiter === "\t" ? "TSV · Tab-separated" : "CSV · Comma-separated"} />
-    <Stat label="Header row" value={props.metadata.headers ? "Yes" : "No"} />
+    <Stat label="Format" value={props.metadata.format.toUpperCase()} />
+    <If when={props.metadata.format === "csv" || props.metadata.format === "tsv"}><Stat label="Header row" value={props.metadata.headers ? "Yes" : "No"} /></If>
     <Stat label="Encoding" value="UTF-8" />
   </View>;
 }

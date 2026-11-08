@@ -41,6 +41,8 @@ pub struct ImportSize {
 pub struct ImportAnalysis {
     /// Comma or tab, counting separators outside quoted fields.
     pub delimiter: String,
+    /// Suggested source format, overridable in review.
+    pub format: String,
     /// True when the sample cannot distinguish comma from tab reliably.
     pub ambiguous: bool,
     /// Input length in bytes, including a BOM.
@@ -86,7 +88,7 @@ impl Tally {
     }
 }
 
-/// Local CSV/TSV detection; never evaluates imported content.
+/// Local format and CSV/TSV separator detection; never evaluates imported content.
 #[module]
 pub struct ImportDetector;
 
@@ -102,12 +104,8 @@ impl ImportDetector {
 
 /// The scan behind `ImportDetector.inspect` and `ImportSource.inspect`.
 pub(crate) fn analyze(input: &[u8], filename: &str) -> Result<ImportAnalysis, EngineError> {
-    let text = std::str::from_utf8(input).map_err(|_| {
-        EngineError::new(
-            "INVALID_UTF8",
-            "Save the file as UTF-8 CSV or TSV and try again.",
-        )
-    })?;
+    let text = std::str::from_utf8(input)
+        .map_err(|_| EngineError::new("INVALID_UTF8", "Save the file as UTF-8 and try again."))?;
     let bytes = text.as_bytes();
     let mut counts = [0usize; 2];
     let (mut comma, mut tab) = (Tally::default(), Tally::default());
@@ -161,6 +159,7 @@ pub(crate) fn analyze(input: &[u8], filename: &str) -> Result<ImportAnalysis, En
     let tab_wins = counts[1] > counts[0]
         || (counts[0] == counts[1] && filename.to_ascii_lowercase().ends_with(".tsv"));
     Ok(ImportAnalysis {
+        format: detect_format(text, filename, tab_wins).into(),
         delimiter: if tab_wins { "\t" } else { "," }.into(),
         ambiguous: counts[0] == counts[1] || (counts[0] > 0 && counts[1] > 0),
         byte_length: saturating_u32(input.len()),
@@ -192,13 +191,15 @@ pub struct FrequentValue {
 pub struct ColumnProfile {
     /// Document-scoped stable column identity.
     pub column_id: u32,
-    /// Stored semantic type; CSV/TSV values remain text.
+    /// Canonical type name, or Mixed; CSV/TSV and XML remain text.
     pub kind: String,
-    /// Distinct present text values, including empty text, excluding missing fields.
+    /// Distinct canonical values, including Null and empty Text, excluding Missing.
     pub unique_count: u32,
     /// Present fields whose text is empty.
     pub empty_count: u32,
-    /// Absent trailing fields in short rows.
+    /// Explicit null values.
+    pub null_count: u32,
+    /// Absent fields, including interior structured properties.
     pub missing_count: u32,
     /// Up to five most frequent nonempty values, ordered by count then text.
     pub common_values: Vec<FrequentValue>,
@@ -227,6 +228,8 @@ pub(crate) struct ProfileJob {
     common: Vec<(u32, u32)>,
     empty: u32,
     missing: u32,
+    nulls: u32,
+    kinds: u8,
 }
 
 impl ProfileJob {
@@ -239,6 +242,8 @@ impl ProfileJob {
             common: Vec::with_capacity(COMMON_VALUES + 1),
             empty: 0,
             missing: 0,
+            nulls: 0,
+            kinds: 0,
         }
     }
 
@@ -255,23 +260,37 @@ impl ProfileJob {
     pub(crate) fn step(&mut self, document: &Document, limit: usize) -> Option<ColumnProfile> {
         let rows = &document.rows;
         let index = self.index;
-        let text = |row: u32| match rows[row as usize].cells().get(index) {
-            Some(CellValue::Text(value)) => value.as_str(),
-            _ => "",
+        let cell = |row: u32| {
+            rows[row as usize]
+                .cells()
+                .get(index)
+                .unwrap_or(&CellValue::Missing)
         };
+        let text = |row: u32| display_value(cell(row));
         let end = self.next.saturating_add(limit).min(rows.len());
         for (position, row) in rows.iter().enumerate().take(end).skip(self.next) {
-            let Some(CellValue::Text(value)) = row.cells().get(index) else {
-                self.missing += 1;
-                continue;
+            let value = row.cells().get(index).unwrap_or(&CellValue::Missing);
+            self.kinds |= match value {
+                CellValue::Missing => {
+                    self.missing += 1;
+                    continue;
+                }
+                CellValue::Null => {
+                    self.nulls += 1;
+                    1
+                }
+                CellValue::Text(_) => 2,
+                CellValue::Boolean(_) => 4,
+                CellValue::Number(_) => 8,
             };
-            if value.is_empty() {
+            let empty = matches!(value, CellValue::Text(s) if s.is_empty());
+            if empty {
                 self.empty += 1;
             }
-            let hash = FxBuildHasher.hash_one(value.as_str());
+            let hash = FxBuildHasher.hash_one(value);
             let candidate = match self.table.entry(
                 hash,
-                |&(h, row, _)| h == hash && text(row) == value,
+                |&(h, row, _)| h == hash && cell(row) == value,
                 |&(h, _, _)| h,
             ) {
                 Entry::Occupied(mut entry) => {
@@ -284,7 +303,7 @@ impl ProfileJob {
                     (position as u32, 1)
                 }
             };
-            if value.is_empty() {
+            if empty || matches!(value, CellValue::Null) {
                 continue;
             }
             // Maintain the five leaders within this slice. A final walk over all
@@ -311,7 +330,15 @@ impl ProfileJob {
         }
         Some(ColumnProfile {
             column_id: self.column_id,
-            kind: "Text".into(),
+            kind: match self.kinds {
+                0 | 2 => "Text",
+                1 => "Null",
+                4 => "Boolean",
+                8 => "Number",
+                _ => "Mixed",
+            }
+            .into(),
+            null_count: self.nulls,
             unique_count: saturating_u32(self.table.len()),
             empty_count: self.empty,
             missing_count: self.missing,
@@ -330,5 +357,47 @@ impl ProfileJob {
                 })
                 .collect(),
         })
+    }
+}
+
+fn detect_format(text: &str, filename: &str, tab: bool) -> &'static str {
+    let text = text.trim_start_matches('\u{feff}').trim_start();
+    let lower = filename.to_ascii_lowercase();
+    if text.starts_with('<') {
+        return "xml";
+    }
+    if text.starts_with('{') || text.starts_with('[') {
+        if lower.ends_with(".ndjson") || lower.ends_with(".jsonl") {
+            return "ndjson";
+        }
+        let mut lines = text.lines().filter(|line| !line.trim().is_empty());
+        if lines.next().is_some_and(|line| {
+            serde_json::from_str::<Box<serde_json::value::RawValue>>(line).is_ok()
+        }) && lines.next().is_some()
+        {
+            return "ndjson";
+        }
+        return "json";
+    }
+    if lower.ends_with(".json") {
+        "json"
+    } else if lower.ends_with(".ndjson") || lower.ends_with(".jsonl") {
+        "ndjson"
+    } else if lower.ends_with(".xml") {
+        "xml"
+    } else if tab {
+        "tsv"
+    } else {
+        "csv"
+    }
+}
+
+pub(crate) fn display_value(value: &CellValue) -> &str {
+    match value {
+        CellValue::Text(s) | CellValue::Number(s) => s,
+        CellValue::Boolean(true) => "true",
+        CellValue::Boolean(false) => "false",
+        CellValue::Null => "null",
+        CellValue::Missing => "",
     }
 }

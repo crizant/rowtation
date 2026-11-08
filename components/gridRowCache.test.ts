@@ -3,7 +3,7 @@ import type { DocumentMetadata, RowWindow, RowsSnapshot } from "rowtation/native
 import { loadGridRows, previewHolds, PREVIEW_BYTES, utf8Prefix, utf8Span } from "./gridRowCache";
 
 function fixture(rowCount = 2000) {
-  const metadata: DocumentMetadata = { id: "synthetic", revision: 0, rowCount, columnCount: 40, dirty: false, delimiter: ",", headers: true };
+  const metadata: DocumentMetadata = { id: "synthetic", revision: 0, rowCount, columnCount: 40, dirty: false, format: "csv", delimiter: ",", headers: true };
   const columns = Array.from({ length: 40 }, (_, id) => ({ id, name: `Column ${id}` }));
   const calls: RowWindow[] = [];
   const fetch = (window: RowWindow): RowsSnapshot => {
@@ -125,7 +125,7 @@ test("preview ranges split on UTF-8 boundaries and stop at 512 bytes", () => {
 });
 
 test("grid cache keeps search flags on the snapshot and out of the cell text", () => {
-  const metadata: DocumentMetadata = { id: "synthetic", revision: 0, rowCount: 1, columnCount: 1, dirty: false, delimiter: ",", headers: true };
+  const metadata: DocumentMetadata = { id: "synthetic", revision: 0, rowCount: 1, columnCount: 1, dirty: false, format: "csv", delimiter: ",", headers: true };
   const loaded = loadGridRows(null, metadata, [{ id: 0, name: "city" }], { start: 0, end: 1 }, { start: 0, end: 1 }, () => ({
     documentId: metadata.id, revision: 0, offset: 0, columnOffset: 0,
     rows: [{ id: 1, cells: [{ kind: "text", byteLength: 8, truncated: false, matched: true, text: "Brisbane" }] }],

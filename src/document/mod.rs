@@ -7,7 +7,7 @@ pub const MAX_WINDOW_ROWS: usize = 256;
 
 /// A value's semantic type. Number retains its exact lexical form, not an f64.
 /// CSV imports produce Text only; absence in ragged rows reads as Missing.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum CellValue {
     Missing,
     Null,
@@ -64,6 +64,8 @@ pub struct Document {
     id: String,
     pub(crate) columns: Vec<Column>,
     pub(crate) rows: Vec<Row>,
+    pub(crate) source_format: String,
+    pub(crate) structure: Option<crate::formats::structured::Structure>,
     source_delimiter: u8,
     source_headers: bool,
     pub(crate) revision: u32,
@@ -97,6 +99,8 @@ impl Document {
             id,
             columns,
             rows,
+            source_format: if delimiter == b'\t' { "tsv" } else { "csv" }.into(),
+            structure: None,
             source_delimiter: delimiter,
             source_headers: headers,
             revision: 0,
@@ -118,6 +122,14 @@ impl Document {
     /// Ordered schema width.
     pub fn column_count(&self) -> usize {
         self.columns.len()
+    }
+    /// Source format selected at import.
+    pub fn source_format(&self) -> &str {
+        &self.source_format
+    }
+    /// Reconstruction metadata; contains identities and shapes, never cell copies.
+    pub fn structure(&self) -> Option<&crate::formats::structured::Structure> {
+        self.structure.as_ref()
     }
     /// Imported delimiter byte.
     pub fn source_delimiter(&self) -> u8 {

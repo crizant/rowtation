@@ -41,9 +41,9 @@ browsers while preserving actions. Style semantic NSH controls in the shared lay
 
 
 On pointer desktops the import home is centered: app mark, title, a rounded drop
-card with visible Paste (⌘V/Ctrl+V also works) and Choose file buttons, and CSV/TSV
+card with visible Paste (⌘V/Ctrl+V also works) and Choose file buttons, and supported-format
 chips. Narrow and touch browsers use a left-aligned title, a pressable import card
-and a grouped action list. Show only CSV/TSV as supported; there is no recent
+and a grouped action list. Show CSV, TSV, JSON, NDJSON and XML as supported; there is no recent
 history. The privacy note is concise and mentions large-file confirmation.
 
 The document toolbar contains a labeled back action, the filename, and a
@@ -57,7 +57,7 @@ a stationary rounded frame. Below 900 points it opens contextually; never squeez
 the permanent sidebar beside a phone-sized grid. Use 44-point rows and targets.
 
 App Dialog centers explicitly on desktop and sits at the bottom below 640 points.
-The import review uses radio tiles for the separator, a checkbox for the header
+The import review offers a format selector. Delimited formats use radio tiles for the separator and a checkbox for the header
 row (it applies on import, not immediately), a measured size summary and, for
 large input, a warning with an "Import anyway" action.
 Its body scrolls when short viewports or large text need more room. Keep the
@@ -69,7 +69,7 @@ includes a base 20-point inset plus the browser safe area.
 
 Show implemented search, replace, sorting, editing, undo and modification counts.
 Do not show export until it exists, and do not draw fake window controls. CSV/TSV values get Text indicators; numeric/date inference would
-misrepresent the engine. An inspector distinguishes empty text from missing fields.
+misrepresent the engine. An inspector distinguishes empty text, Null and Missing and reports canonical type counts. Structured format settings follow docs/structured-imports.md.
 
 Clickable buttons and checkboxes use a pointer cursor; disabled controls use a
 not-allowed cursor and suppress interaction.

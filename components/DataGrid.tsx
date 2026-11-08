@@ -100,7 +100,7 @@ export function DataGrid(props: {
       const mark = active();
       if (!mark || mark.row !== cell.row || mark.column !== cell.column) return null;
       const snap = snapshot();
-      const split = utf8Span(snap?.text ?? "", mark.start, mark.end);
+      const split = utf8Span(snap?.text ?? snap?.number ?? (snap?.boolean == null ? "" : String(snap.boolean)), mark.start, mark.end);
       return split?.hit ? { ...split, after: split.after + (snap?.truncated ? "…" : "") } : null;
     });
     return <View testID={matched() ? "search-highlight" : "grid-custom-cell"}
@@ -126,7 +126,7 @@ export function DataGrid(props: {
     onVisibleRowsChange={e => { visibleRows = e.range; load(); }}
     onVisibleColumnsChange={e => { visibleColumns = e.range; load(); }} onSelectionChange={e => select(e.selection)}
     renderHeaderCell={cell => <View class="flex-1 flex-row items-center gap-2 px-3">
-      <View class="h-4 min-w-5 items-center justify-center rounded bg-muted px-1"><Text class="text-[10px] font-medium text-muted-foreground">Aa</Text></View>
+      <If when={props.metadata.format !== "json" && props.metadata.format !== "ndjson"}><View class="h-4 min-w-5 items-center justify-center rounded bg-muted px-1"><Text class="text-[10px] font-medium text-muted-foreground">Aa</Text></View></If>
       <Text class="line-clamp-1 flex-1 text-xs font-medium text-muted-foreground">{cell.title}</Text>
     </View>}
     classes={{ root: "border-0", header: "bg-background border-b border-border/70", headerCell: "border-0",
@@ -135,6 +135,6 @@ export function DataGrid(props: {
       sortIndicator: "text-muted-foreground", sortAscending: "text-muted-foreground selected:text-foreground",
       sortDescending: "text-muted-foreground selected:text-foreground",
       rowHeader: "text-muted-foreground bg-background text-xs", rowHeaderCorner: "bg-background" }}
-    empty={<View class="flex-1 items-center justify-center gap-2 p-6"><Text class="text-foreground">No data rows</Text>
-      <Text class="text-sm text-muted-foreground">This document is empty or contains only headers.</Text></View>} />;
+    empty={<View class="flex-1 items-center justify-center gap-2 p-6"><Text class="text-foreground">{props.metadata.columnCount === 0 && props.metadata.rowCount > 0 ? "No fields to display" : "No data rows"}</Text>
+      <Text class="text-sm text-muted-foreground">{props.metadata.format === "json" || props.metadata.format === "ndjson" ? "Empty objects and arrays are retained in the source structure." : "This document is empty or contains only headers."}</Text></View>} />;
 }
