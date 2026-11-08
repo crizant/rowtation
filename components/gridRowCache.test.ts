@@ -1,6 +1,6 @@
 import { expect, test } from "nsh/test";
 import type { DocumentMetadata, RowWindow, RowsSnapshot } from "rowtation/native";
-import { loadGridRows, PREVIEW_BYTES } from "./gridRowCache";
+import { gridCellDisplay, gridCellValue, loadGridRows, PREVIEW_BYTES } from "./gridRowCache";
 
 function fixture(rowCount = 2000) {
   const metadata: DocumentMetadata = { id: "synthetic", revision: 0, rowCount, columnCount: 40, dirty: false, delimiter: ",", headers: true };
@@ -10,7 +10,7 @@ function fixture(rowCount = 2000) {
     calls.push(window);
     return { documentId: metadata.id, revision: metadata.revision, offset: window.offset, columnOffset: window.columnOffset ?? 0,
       rows: Array.from({ length: window.limit }, (_, i) => ({ id: window.offset + i,
-        cells: Array.from({ length: window.columnLimit ?? 40 }, (_, column) => ({ kind: "text", byteLength: 8, truncated: false, text: `r${window.offset + i}c${(window.columnOffset ?? 0) + column}` })) })) };
+        cells: Array.from({ length: window.columnLimit ?? 40 }, (_, column) => ({ kind: "text", byteLength: 8, truncated: false, matched: false, text: `r${window.offset + i}c${(window.columnOffset ?? 0) + column}` })) })) };
   };
   const load = (previous: ReturnType<typeof loadGridRows> | null, start: number, end: number, columnStart = 0, columnEnd = 4) =>
     loadGridRows(previous, metadata, columns, { start, end }, { start: columnStart, end: columnEnd }, fetch);
@@ -59,7 +59,7 @@ test("grid cache fetches a missing suffix when the viewport crosses the cached r
   expect(calls.length).toBe(2);
   expect(calls[1].offset).toBe(256);
   expect(crossed.data[250 - crossed.snapshot.offset]).toBe(initial.data[250]);
-  expect(crossed.data[273 - crossed.snapshot.offset]["0"]).toBe("r273c0");
+  expect(gridCellDisplay(crossed.data[273 - crossed.snapshot.offset]["0"]).text).toBe("r273c0");
   expect(crossed.data.length).toBe(256);
 });
 
@@ -70,16 +70,16 @@ test("grid cache handles large jumps and document ends with one bounded fetch", 
   expect(calls.length).toBe(2);
   expect(calls[1].offset).toBe(jumped.snapshot.offset);
   expect(calls[1].limit).toBe(256);
-  expect(jumped.data[1500 - jumped.snapshot.offset]["0"]).toBe("r1500c0");
+  expect(gridCellDisplay(jumped.data[1500 - jumped.snapshot.offset]["0"]).text).toBe("r1500c0");
   const bottom = load(jumped, 1976, 2000);
   expect(bottom.snapshot.offset).toBe(1744);
   expect(bottom.data.length).toBe(256);
-  expect(bottom.data[255]["0"]).toBe("r1999c0");
+  expect(gridCellDisplay(bottom.data[255]["0"]).text).toBe("r1999c0");
   expect(load(bottom, 1975, 1999)).toBe(bottom);
   const top = load(bottom, 0, 24);
   expect(calls.length).toBe(4);
   expect(top.snapshot.offset).toBe(0);
-  expect(top.data[0]["0"]).toBe("r0c0");
+  expect(gridCellDisplay(top.data[0]["0"]).text).toBe("r0c0");
 });
 
 test("grid cache invalidates column windows, document identity and revision", () => {
@@ -89,7 +89,7 @@ test("grid cache invalidates column windows, document identity and revision", ()
   const horizontal = load(initial, 0, 24, 20, 24);
   expect(calls.length).toBe(2);
   expect(horizontal.snapshot.columnOffset).toBe(16);
-  expect(horizontal.data[0]["20"]).toBe("r0c20");
+  expect(gridCellDisplay(horizontal.data[0]["20"]).text).toBe("r0c20");
   expect(horizontal.data[0]).not.toBe(initial.data[0]);
   metadata.revision++;
   const revised = load(horizontal, 0, 24, 20, 24);
@@ -109,7 +109,17 @@ test("grid cache ignores transient empty viewport ranges", () => {
   expect(calls.length).toBe(1);
   const visible = load(initial, 1500, 1524);
   expect(calls.length).toBe(2);
-  expect(visible.data[1500 - visible.snapshot.offset]["0"]).toBe("r1500c0");
+  expect(gridCellDisplay(visible.data[1500 - visible.snapshot.offset]["0"]).text).toBe("r1500c0");
+});
+
+test("search matches change the table value without appearing in the cell text", () => {
+  const cell = { kind: "text" as const, byteLength: 8, truncated: false, matched: false, text: "Brisbane" };
+  const plain = gridCellValue(cell);
+  const marked = gridCellValue({ ...cell, matched: true });
+  expect(plain).not.toBe(marked);
+  expect(gridCellDisplay(plain)).toEqual({ text: "Brisbane", matched: false });
+  expect(gridCellDisplay(marked)).toEqual({ text: "Brisbane", matched: true });
+  expect(gridCellDisplay(marked).text).not.toContain("\u200c");
 });
 
 test("grid cache handles small and empty documents without repeated fetches", () => {

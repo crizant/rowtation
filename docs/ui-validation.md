@@ -55,21 +55,21 @@ are shared with the development server and package builder.
 Verified on 2026-11-08 with NSH 0.4.0 and Chrome for Testing:
 
 - `cargo fmt --check`, `nsh check`, and `nsh build`: passed.
-- `nsh test`: 32 passed (24 Rust tests and eight UI/bridge workflows).
-- `nsh test --target web --browser <Chromium>`: eight workflows passed.
+- `nsh test`: 63 passed, with 2 ignored stress tests (41 Rust tests and 22 UI/cache workflows).
+- `nsh test --target web --browser <Chromium>`: 22 passed, including removal of search highlights after closing Find.
 - `scripts/test-browser-files.sh`: local picker/drop workflow passed.
 - Native and wasm32 `cargo clippy` with warnings denied: passed.
+- `tests/operations-layouts.steps.js`: passed. Match highlights are visible while Find is open. Closing Find leaves the grid without them, on both the 1440-point and 390-point layouts, and the mobile status line shows the full unsaved state.
 - `nsh package --target web -o dist`: passed.
-- Visually inspected desktop and mobile home, import review, the large-dataset
-  warning, document, inspector and dark desktop captures. The test browser does
-  not report a desktop pointer, so the 34-point desktop grid density and compact
-  controls are not shown in these captures.
+- The test browser does not report a desktop pointer, so the 34-point desktop grid density and compact controls are not shown in these captures. Import-layout captures were not regenerated for this operations pass.
 
 ## Limits
 
 CSV/TSV values remain literal Text. There is no numeric/date inference, automatic
-header inference, history, persistence, search, sorting, editing, undo or export
-UI. The existing internal serializer remains available to Rust callers.
+header inference, document history, persistence, or export/download UI. Sorting,
+search, cell editing, literal replacement and bounded undo/redo stay in the
+active in-memory document. The existing internal serializer remains available to
+Rust callers.
 
 Parsing and first-time column profiling are synchronous on the browser thread.
 There are no size caps. Above 8 MiB, 100,000 records, 512 columns, 1,000,000
@@ -85,3 +85,11 @@ The scoped duplicate-scrollbar CSS depends on NSH 0.4's browser DOM classes,
 including the desktop bar's stacking. Visually check that horizontal scrolling
 still works and that the bar stays under Diagnostics when upgrading NSH. Web is
 the only deliverable.
+
+## Editor captures
+
+`tests/operations-layouts.steps.js` imports synthetic orders, sorts and replaces in
+a selected column, verifies a visible highlight, checks that closing Find clears
+it, and captures desktop, mobile, closed-find and
+touch-editor states. Run `nsh test App.tsx --target web --browser /path/to/chrome < tests/operations-layouts.steps.js`. The captures are
+`docs/screenshots/operations-{desktop,mobile,find-closed,find-closed-desktop,mobile-editor}.png`.

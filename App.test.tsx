@@ -117,6 +117,7 @@ test("large data imports only after an explicit confirmation", async () => {
   const text = "id\n" + Array.from({ length: 100_001 }, (_, i) => String(i + 1)).join("\n");
   const app = await open("./App.tsx", { width: 1280, height: 800, clipboard: text });
   await app.press("Paste from clipboard");
+  await app.waitUntil(() => app.value("paste-input") === text);
   await app.press("Review import");
   await app.waitFor("This is a large dataset");
   expect(app.texts().join("\n")).toContain("100,001 rows · 1 column");
@@ -124,6 +125,7 @@ test("large data imports only after an explicit confirmation", async () => {
   await app.press("Cancel");
   expect(app.texts()).toContain("Rowtation");
   await app.press("Paste from clipboard");
+  await app.waitUntil(() => app.value("paste-input") === text);
   await app.press("Review import");
   await app.press("Import anyway");
   await app.waitFor("100,001 rows · 1 column");
@@ -191,4 +193,52 @@ test("long pasted text stays inside the field and import actions remain reachabl
   expect(app.texts()).toContain("Import “Pasted data”");
   await app.press("Import document");
   await app.waitFor("100 rows · 2 columns");
+});
+
+test("search navigation and scoped replacement remain correct after sort", async () => {
+  const app = await open("./App.tsx", { width: 1280, height: 800, clipboard: "id,city\nb,Brisbane Brisbane\na,Sydney\nc,Brisbane" });
+  await app.press("Paste from clipboard"); await app.press("Review import"); await app.press("Import document");
+  await app.waitFor("3 rows · 2 columns");
+  await app.press("Sydney"); await app.press("Find & replace");
+  await app.paste("find-input", { text: "Brisbane" }); await app.waitFor("1 of 3 matches");
+  expect(app.count("id:search-highlight") > 0).toBe(true);
+  await app.press("Next"); await app.waitFor("2 of 3 matches");
+  await app.press("Next"); await app.waitFor("Row 3 · Column 2");
+  await app.press("Previous"); await app.waitFor("2 of 3 matches");
+  await app.paste("replace-input", { text: "City" }); await app.press("Replace");
+  await app.waitFor("1 replacement in 1 cell");
+  await app.press("Replace all"); await app.waitFor("2 replacements in 2 cells");
+  await app.press("Undo"); await app.waitFor("1 of 2 matches");
+  await app.press("Undo"); await app.waitFor("1 of 3 matches");
+  await app.press("Close find");
+  await app.waitUntil(() => app.count("id:search-highlight") === 0);
+  await app.press("a"); await app.press("Sort ↓");
+  await app.press("c"); await app.press("Edit cell…");
+  await app.clear("cell-draft"); await app.paste("cell-draft", { text: "z" }); await app.press("Save cell");
+  await app.waitFor("1 modified · Unsaved");
+  await app.press("Reset order"); await app.press("z"); await app.waitFor("Row 3 · Column 1");
+  await app.press("Undo"); await app.waitFor("Unmodified");
+});
+
+test("mobile touch editing supports commit cancel and undo", async () => {
+  const app = await open("./App.tsx", { width: 390, height: 844, clipboard: "name,city\nMia,Brisbane" });
+  await app.press("Paste from clipboard"); await app.press("Review import"); await app.press("Import document");
+  await app.waitFor("1 row · 2 columns"); await app.press("Mia"); await app.press("Edit cell…");
+  await app.clear("cell-draft"); await app.paste("cell-draft", { text: "Ann" }); await app.press("Save cell");
+  await app.waitFor("Ann"); await app.press("Edit cell…");
+  await app.paste("cell-draft", { text: "discard" }); await app.press("Cancel");
+  await app.press("Undo"); await app.waitFor("Mia"); await app.waitFor("Unmodified");
+  await app.press("Redo"); await app.waitFor("Ann");
+});
+
+test("cell editor keyboard commits, tabs, and cancels without mutating drafts", async () => {
+  const app = await open("./App.tsx", { width: 1280, height: 800, clipboard: "a,b\nx,y" });
+  await app.press("Paste from clipboard"); await app.press("Review import"); await app.press("Import document");
+  await app.waitFor("1 row · 2 columns"); await app.press("x"); await app.keyboard.press("f2");
+  await app.clear("cell-draft"); await app.paste("cell-draft", {text: "first"}); await app.keyboard.press("tab");
+  await app.waitFor("Row 1 · Column 2"); await app.keyboard.press("f2");
+  await app.clear("cell-draft"); await app.paste("cell-draft", {text: "second"}); await app.keyboard.press("enter");
+  await app.waitFor("2 modified · Unsaved"); await app.keyboard.press("f2");
+  await app.paste("cell-draft", {text: "discard"}); await app.keyboard.press("escape");
+  await app.waitFor("second"); await app.keyboard.press("mod+z"); await app.waitFor("1 modified · Unsaved");
 });

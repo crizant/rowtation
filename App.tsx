@@ -1,6 +1,6 @@
 import { cleanup, Clipboard, Image, keymap, mount, platform, Scroll, signal, Text, View, windowSize } from "nsh";
 import { Button as BaseButton, Toolbar } from "nsh/base";
-import { BrowserImport, BrowserStyles, DocumentSession, ImportSource, type ColumnMetadata, type ColumnProfile, type DocumentMetadata, type ImportAnalysis, type LocalImport } from "rowtation/native";
+import { BrowserImport, BrowserStyles, DocumentSession, ImportSource, type ColumnMetadata, type ColumnProfile, type DocumentMetadata, type ImportAnalysis, type LocalImport, type SearchResult } from "rowtation/native";
 import appIcon from "./assets/icon.svg";
 import { ActionList, ActionRow } from "./components/ActionList";
 import { Badge } from "./components/Badge";
@@ -24,8 +24,36 @@ interface OpenDocument {
   dispose: () => void;
 }
 
+function EditInput(props: { value: string; onChange: (value: string) => void; onCommit: (tab?: boolean) => void; onCancel: () => void }) {
+  // NSH Input does not report Tab through onKeyPress; this binding lives only with the editor.
+  keymap.bind("tab", () => props.onCommit(true), { when: "always" });
+  keymap.bind("escape", () => props.onCancel(), { when: "always" });
+  return <Input label="Cell value" testID="cell-draft" value={props.value} onChange={value => props.onChange(value)} autoFocus multiline
+    submitBehavior="submit" onSubmit={() => props.onCommit()} />;
+}
+
 function DocumentView(props: { document: OpenDocument; onClose: () => void; onImport: () => void }) {
   cleanup(() => props.document.dispose());
+  const metadata = signal(props.document.metadata);
+  const version = signal(0);
+  const edits = signal(props.document.session.editStatus());
+  const sorting = signal<import("nsh/base").DataTableSort | null>(null);
+  const finding = signal(false);
+  const term = signal("");
+  const replacement = signal("");
+  const sensitive = signal(false);
+  const regex = signal(false);
+  const scoped = signal(false);
+  const scopeId = signal<number | null>(null);
+  const results = signal<SearchResult>({ count: 0, current: null });
+  const matchIndex = signal(0);
+  const operationError = signal("");
+  const notice = signal("");
+  const editing = signal(false);
+  const editDraft = signal("");
+  let focusGrid = () => {};
+  let searchTimer: ReturnType<typeof setTimeout> | undefined;
+  cleanup(() => clearTimeout(searchTimer));
   const selection = signal<CellSelection | null>(null);
   const column = signal<ColumnMetadata | null>(null);
   const profile = signal<ColumnProfile | null>(null);
@@ -97,6 +125,79 @@ function DocumentView(props: { document: OpenDocument; onClose: () => void; onIm
     clearTimeout(copied);
     copied = setTimeout(() => copyLabel.set("Copy value"), 1500);
   }
+  function attempt(action: () => void) {
+    operationError.set(""); notice.set("");
+    try { action(); } catch (cause) { operationError.set(cause instanceof Error ? cause.message : String(cause)); }
+  }
+  function refresh() {
+    metadata.set(props.document.session.metadata());
+    edits.set(props.document.session.editStatus());
+    const current = selection();
+    if (current) selection.set({ ...current, rowIndex: props.document.session.rowPosition(current.rowId), preview: props.document.session.readCell(current.rowId, current.columnId) });
+    stopProfile(); profile.set(null);
+    if (wide() || info()) ensureProfile();
+    runSearch(false);
+  }
+  function runSearch(reveal = true) {
+    clearTimeout(searchTimer);
+    results.set({ count: 0, current: null }); matchIndex.set(0);
+    try {
+      const result = props.document.session.search({ term: finding() ? term() : "", columnId: scoped() ? scopeId() : null, caseSensitive: sensitive(), regex: regex() });
+      results.set(result);
+      if (reveal && result.current) revealMatch(0);
+    } catch (cause) { operationError.set(cause instanceof Error ? cause.message : String(cause)); }
+    version.set(version() + 1);
+  }
+  function queueSearch() { clearTimeout(searchTimer); searchTimer = setTimeout(() => { searchTimer = undefined; attempt(() => runSearch()); }, 180); }
+  function revealMatch(index: number) {
+    const length = results().count;
+    if (!length) return;
+    const next = (index + length) % length;
+    const match = props.document.session.searchMatch(next);
+    if (!match) return;
+    matchIndex.set(next);
+    const columnIndex = props.document.columns.findIndex(c => c.id === match.columnId);
+    select({ documentId: metadata().id, rowId: match.rowId, columnId: match.columnId, rowIndex: match.rowIndex, columnIndex,
+      preview: props.document.session.readCell(match.rowId, match.columnId) }, match.columnId);
+  }
+  function sort(next: import("nsh/base").DataTableSort | null) {
+    attempt(() => {
+      props.document.session.sort(next ? Number(next.key) : null, next?.direction === "descending");
+      sorting.set(next); refresh();
+    });
+  }
+  function history(redo: boolean) { attempt(() => { props.document.session.history(redo); refresh(); }); }
+  function beginEdit() { if (selection()) { editDraft.set(wholeValue() ?? ""); editing.set(true); } }
+  function cancelEdit() { editing.set(false); focusGrid(); }
+  function commitEdit(tab = false) {
+    attempt(() => {
+      const current = selection(); if (!current) return;
+      props.document.session.editCell(current.rowId, current.columnId, editDraft(), metadata().revision);
+      editing.set(false); refresh();
+      if (tab && metadata().columnCount) {
+        const position = (selection()?.rowIndex ?? current.rowIndex) * metadata().columnCount + current.columnIndex + 1;
+        const rowIndex = Math.floor(position / metadata().columnCount), columnIndex = position % metadata().columnCount;
+        if (rowIndex < metadata().rowCount) {
+          const row = props.document.session.rows({ offset: rowIndex, limit: 1, columnOffset: columnIndex, columnLimit: 1 }).rows[0];
+          const columnId = props.document.columns[columnIndex].id;
+          select({ documentId: metadata().id, rowId: row.id, columnId, rowIndex, columnIndex, preview: row.cells[0] }, columnId);
+        }
+      }
+      focusGrid();
+    });
+  }
+  function clearCell() { attempt(() => { const cell = selection(); if (cell) { props.document.session.editCell(cell.rowId, cell.columnId, "", metadata().revision); refresh(); } }); }
+  function replace(all: boolean) {
+    attempt(() => {
+      if (searchTimer) { clearTimeout(searchTimer); searchTimer = undefined; runSearch(); }
+      if (!results().count) return;
+      const result = props.document.session.replaceMatches(all ? null : matchIndex(), replacement(), metadata().revision);
+      refresh(); notice.set(`${count(result.replacements, "replacement", "replacements")} in ${count(result.affectedCells, "cell", "cells")}`);
+    });
+  }
+  keymap.bind("mod+z", () => history(false), { when: "notEditing" });
+  keymap.bind("mod+shift+z", () => history(true), { when: "notEditing" });
+  keymap.bind("f2", beginEdit, { when: "notEditing" });
   const format = () => (props.document.metadata.delimiter === "\t" ? "TSV" : "CSV") + " · UTF-8";
   return <View class="flex-1 min-h-0 min-w-0 bg-background">
     <Toolbar accessibilityLabel="Document toolbar" class="min-h-14 shrink-0 flex-row items-center gap-3 border-b border-border/70 px-3 py-2 md:px-4">
@@ -107,15 +208,51 @@ function DocumentView(props: { document: OpenDocument; onClose: () => void; onIm
       </View>
       <If when={wide()}><Button label="Import…" compact onPress={() => props.onImport()} /></If>
     </Toolbar>
+    <View class="shrink-0 border-b border-border/70 px-3 py-2 gap-2">
+      <View class="flex-row flex-wrap items-center gap-2">
+        <Button label={finding() ? "Close find" : "Find & replace"} quiet compact={wide()} onPress={() => { finding.set(!finding()); attempt(() => runSearch(false)); }} />
+        <Button label="Undo" quiet compact={wide()} disabled={!edits().canUndo} onPress={() => history(false)} />
+        <Button label="Redo" quiet compact={wide()} disabled={!edits().canRedo} onPress={() => history(true)} />
+        <Button label="Edit cell…" quiet compact={wide()} disabled={!selection()} onPress={beginEdit} />
+        <Button label="Clear cell" quiet compact={wide()} disabled={!selection()} onPress={clearCell} />
+        <Button label="Sort ↑" quiet compact={wide()} disabled={!column()} onPress={() => sort({ key: String(column()!.id), direction: "ascending" })} />
+        <Button label="Sort ↓" quiet compact={wide()} disabled={!column()} onPress={() => sort({ key: String(column()!.id), direction: "descending" })} />
+        <If when={sorting()}><Button label="Reset order" quiet compact={wide()} onPress={() => sort(null)} /></If>
+      </View>
+      <If when={finding()}>
+        <View class="flex-row flex-wrap gap-2">
+          <View class="flex-1 min-w-36"><Input label="Find" placeholder="Find" testID="find-input" value={term()} onChange={value => { term.set(value); queueSearch(); }} onSubmit={() => attempt(() => runSearch())} /></View>
+          <View class="flex-1 min-w-36"><Input label="Replace with" placeholder="Replace with" testID="replace-input" value={replacement()} onChange={value => replacement.set(value)} /></View>
+        </View>
+        <View class="flex-row flex-wrap items-center gap-x-3 gap-y-1">
+          <Checkbox label="Case sensitive" checked={sensitive()} onChange={value => { sensitive.set(value); attempt(() => runSearch()); }} />
+          <Checkbox label="Regex" checked={regex()} onChange={value => { regex.set(value); attempt(() => runSearch()); }} />
+          <Checkbox label={scoped() ? `Only: ${props.document.columns.find(c => c.id === scopeId())?.name || "(unnamed)"}` : "Selected column only"} checked={scoped()} disabled={!column()} onChange={value => { scopeId.set(column()?.id ?? null); scoped.set(value); attempt(() => runSearch()); }} />
+          <Text class="text-xs text-muted-foreground">{scoped() ? "" : "All columns"}</Text>
+        </View>
+        <View class="flex-row flex-wrap items-center gap-2">
+          <Text testID="search-count" class="text-xs text-muted-foreground">{results().count ? `${matchIndex() + 1} of ${results().count} matches` : "0 matches"}</Text>
+          <Button label="Previous" quiet compact={wide()} disabled={!results().count} onPress={() => revealMatch(matchIndex() - 1)} />
+          <Button label="Next" quiet compact={wide()} disabled={!results().count} onPress={() => revealMatch(matchIndex() + 1)} />
+          <Button label="Replace" quiet compact={wide()} disabled={!results().count || !!operationError()} onPress={() => replace(false)} />
+          <Button label="Replace all" compact={wide()} disabled={!results().count || !!operationError()} onPress={() => replace(true)} />
+        </View>
+        <If when={regex()}><Text class="text-xs text-muted-foreground">Rust regex · Unicode · replacement is literal ($ and backslashes stay unchanged)</Text></If>
+      </If>
+      <If when={operationError()}><Text role="alert" class="text-xs text-destructive">{operationError()}</Text></If>
+      <If when={notice()}><Text class="text-xs text-muted-foreground">{notice()}</Text></If>
+    </View>
     <View class="flex-1 min-h-0 min-w-0 flex-row">
       <View class="flex-1 min-w-0 min-h-0">
-        <DataGrid session={props.document.session} metadata={props.document.metadata} columns={props.document.columns} onSelect={select} />
+        <DataGrid session={props.document.session} metadata={metadata()} columns={props.document.columns} onSelect={select}
+          version={version()} selected={selection()} sort={sorting()} onSort={sort} onEdit={beginEdit} onReady={focus => { focusGrid = focus; }} />
         <View class="shrink-0 min-h-9 flex-row items-center justify-between gap-3 border-t border-border/70 px-4 py-1.5">
-          <View class="flex-row items-center gap-4">
+          <View class="flex-1 min-w-0 flex-row flex-wrap items-center gap-x-4 gap-y-1">
             <Text class="text-xs text-muted-foreground">{count(props.document.metadata.rowCount, "row", "rows")} · {count(props.document.metadata.columnCount, "column", "columns")}</Text>
+            <If when={finding()}><Text class="text-xs text-muted-foreground">{`${results().count} matches`}</Text></If>
             <If when={selection()}><Text class="text-xs text-muted-foreground">{`Row ${(selection()?.rowIndex ?? 0) + 1} · Column ${(selection()?.columnIndex ?? 0) + 1}`}</Text></If>
           </View>
-          <Text class="text-xs text-muted-foreground">Read only</Text>
+          <Text testID="edit-status" class="text-xs text-muted-foreground">{edits().modifiedCells ? `${edits().modifiedCells} modified · Unsaved` : "Unmodified"}</Text>
         </View>
         <If when={!wide()}>
           <View class="shrink-0 flex-row items-center gap-3 border-t border-border/70 bg-muted/30 px-4 py-3">
@@ -132,7 +269,7 @@ function DocumentView(props: { document: OpenDocument; onClose: () => void; onIm
         <View class="w-72 shrink-0 min-h-0 bg-muted/40 p-3">
           <View testID="inspector-panel" class="flex-1 min-h-0 overflow-hidden rounded-2xl border border-border/60 bg-background shadow-sm">
             <Scroll testID="inspector-scroll" class="flex-1 min-h-0">
-              <Inspector column={column()} profile={profile()} metadata={props.document.metadata} selection={selection()} progress={progress()}
+              <Inspector column={column()} profile={profile()} metadata={metadata()} selection={selection()} progress={progress()}
                 copyLabel={copyLabel()} onShowValue={showValue} onCopyValue={() => void copyValue()} />
             </Scroll>
           </View>
@@ -141,9 +278,17 @@ function DocumentView(props: { document: OpenDocument; onClose: () => void; onIm
     </View>
     <If when={info() && windowSize().width < 900}>
       <Dialog title="Column information" onClose={closeInfo}>
-        <Scroll style={{ maxHeight: windowSize().height * 0.6 }} class="min-h-0"><Inspector column={column()} profile={profile()} metadata={props.document.metadata} selection={selection()} progress={progress()}
+        <Scroll style={{ maxHeight: windowSize().height * 0.6 }} class="min-h-0"><Inspector column={column()} profile={profile()} metadata={metadata()} selection={selection()} progress={progress()}
           copyLabel={copyLabel()} onShowValue={showValue} onCopyValue={() => void copyValue()} /></Scroll>
         <Button label="Done" compact={platform.desktop} onPress={closeInfo} />
+      </Dialog>
+    </If>
+    <If when={editing()}>
+      <Dialog title={`Edit ${column()?.name || "cell"}`} onClose={cancelEdit} footer={<View class="flex-row justify-end gap-2">
+        <Button label="Cancel" quiet onPress={cancelEdit} /><Button label="Save cell" onPress={() => commitEdit()} />
+      </View>}>
+        <EditInput value={editDraft()} onChange={value => editDraft.set(value)} onCommit={commitEdit} onCancel={cancelEdit} />
+        <If when={operationError()}><Text class="text-xs text-destructive">{operationError()}</Text></If>
       </Dialog>
     </If>
     <If when={full() != null}>

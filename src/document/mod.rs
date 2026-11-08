@@ -38,8 +38,8 @@ impl Column {
     }
 }
 
-/// A stable row. Its backing position is immutable; future sort/filter operations
-/// should order identities in a view rather than reorder this storage.
+/// A stable row. Its backing position is immutable; sort operations
+/// order identities in a view rather than reorder this storage.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Row {
     pub(crate) id: u32,
@@ -66,8 +66,8 @@ pub struct Document {
     pub(crate) rows: Vec<Row>,
     source_delimiter: u8,
     source_headers: bool,
-    revision: u32,
-    dirty: bool,
+    pub(crate) revision: u32,
+    pub(crate) dirty: bool,
 }
 
 impl Document {
@@ -131,7 +131,7 @@ impl Document {
     pub fn revision(&self) -> u32 {
         self.revision
     }
-    /// Imported documents are clean; mutation is reserved for a later milestone.
+    /// Whether current values differ from the imported document.
     pub fn dirty(&self) -> bool {
         self.dirty
     }

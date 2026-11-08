@@ -14,8 +14,10 @@ then export and download the result.
 **Status:** CSV/TSV import and inspection are implemented: choose a local file,
 drop one into the browser, or paste text; review the separator and header option;
 then inspect a virtualized grid with keyboard/touch cell selection and column
-statistics. Desktop uses a right inspector; narrow browsers use a contextual
-panel. Search, sorting, editing, other formats and export/download UI remain planned.
+statistics. Sorting, scoped search, literal/regex find and replace, cell editing,
+bounded undo/redo and accurate modified-cell counts are implemented. Desktop uses
+a right inspector; narrow browsers use a contextual panel. Other formats and
+export/download UI remain planned. See [operation semantics](docs/operations.md).
 
 Data stays local. There is no backend, upload, telemetry, persistent storage or
 session history. Closing a document releases its Rust session. Import failures

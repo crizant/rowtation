@@ -1,7 +1,8 @@
 # Delivery plan
 
 The mixed foundation, data core, and CSV/TSV import/inspection milestones are
-implemented. Transformations, additional formats and downloads remain pending. Complete and test each slice before marking
+implemented, along with sorting, search, editing, find/replace and undo/redo.
+Additional formats and downloads remain pending. Complete and test each slice before marking
 its formats or operations as supported in the README.
 
 1. **Mixed foundation (implemented):** wire TSX to Rust, align the NSH release, verify generated
@@ -10,8 +11,8 @@ its formats or operations as supported in the README.
    CSV/TSV parsing and serialization with Rust fixtures and round trips.
 3. **Import and inspection (implemented):** paste, drop and Open; parsing options, errors,
    row counts and a virtualized table. Verify keyboard and touch access.
-4. **Transformations:** Rust-owned sort and search, cell edits, scoped find/replace
-   and clear dirty/error states. Test identity under filtering and sorting.
+4. **Transformations (implemented):** Rust-owned sort and search, cell edits, scoped find/replace
+   and clear dirty/error states. Test identity under searching and sorting.
 5. **Structured formats:** JSON and NDJSON, then XML with explicit mapping rules
    and visible loss warnings. Test missing, null, nested and mixed-type values.
 6. **Excel:** WASM-compatible readers/writers, worksheet selection, dates,

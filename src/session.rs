@@ -1,5 +1,8 @@
 //! NSH transport records contain only requested snapshots; the session owns Rust data.
 use crate::inspection::{ColumnProfile, ProfileJob, ProfileProgress};
+use crate::operations::{
+    EditStatus, MutationResult, Operations, SearchMatch, SearchOptions, SearchResult,
+};
 use crate::{
     diagnostics::now_ms,
     document::{CellValue, Document},
@@ -60,9 +63,9 @@ pub struct DocumentMetadata {
     pub row_count: u32,
     /// Number of ordered columns, including generated extra-field columns.
     pub column_count: u32,
-    /// Zero for a newly imported document; reserved for future mutations.
+    /// Zero on import; incremented once per data transaction.
     pub revision: u32,
-    /// False for an imported document; reserved for future mutations.
+    /// True when current values differ from import.
     pub dirty: bool,
     /// Imported delimiter character.
     pub delimiter: String,
@@ -115,6 +118,8 @@ pub struct CellSnapshot {
     pub byte_length: u32,
     /// True when text or number holds only a prefix of the value.
     pub truncated: bool,
+    /// True when the current search matches this cell.
+    pub matched: bool,
 }
 impl CellSnapshot {
     fn new(value: &CellValue, preview: usize) -> Self {
@@ -174,7 +179,7 @@ pub struct RowSnapshot {
 pub struct RowsSnapshot {
     /// Owning document identity.
     pub document_id: String,
-    /// Dataset revision; future UI can reject stale windows after mutations.
+    /// Dataset revision; windows are invalidated after mutations.
     pub revision: u32,
     /// Zero-based start position.
     pub offset: u32,
@@ -195,6 +200,7 @@ pub struct DocumentSession {
     document: Document,
     profiles: VecDeque<ColumnProfile>,
     job: Option<ProfileJob>,
+    operations: Operations,
 }
 
 #[class]
@@ -205,6 +211,7 @@ impl DocumentSession {
         Ok(Self {
             profiles: VecDeque::new(),
             job: None,
+            operations: Operations::default(),
             document: delimited::parse(
                 &input,
                 options.delimiter.as_deref().unwrap_or(","),
@@ -219,6 +226,7 @@ impl DocumentSession {
         Ok(Self {
             profiles: VecDeque::new(),
             job: None,
+            operations: Operations::default(),
             document: delimited::parse(
                 &source.bytes,
                 options.delimiter.as_deref().unwrap_or(","),
@@ -258,9 +266,14 @@ impl DocumentSession {
     /// a columnOffset past columnCount or a limit above 256 throws INVALID_WINDOW.
     pub fn rows(&self, window: RowWindow) -> Result<RowsSnapshot, EngineError> {
         let started = window.measure.unwrap_or(false).then(now_ms);
-        let rows = self
-            .document
+        self.document
             .window(window.offset as usize, window.limit as usize)?;
+        let order = &self.operations.order;
+        let end_row =
+            (window.offset as usize + window.limit as usize).min(self.document.row_count());
+        let rows: Vec<_> = (window.offset as usize..end_row)
+            .map(|i| &self.document.rows[order.get(i).copied().unwrap_or(i)])
+            .collect();
         let count = self.document.column_count();
         let start = window.column_offset.unwrap_or(0) as usize;
         if start > count {
@@ -286,10 +299,15 @@ impl DocumentSession {
                     id: r.id(),
                     cells: (start..end)
                         .map(|i| {
-                            CellSnapshot::new(
+                            let mut cell = CellSnapshot::new(
                                 r.cells().get(i).unwrap_or(&CellValue::Missing),
                                 preview,
-                            )
+                            );
+                            cell.matched = self
+                                .operations
+                                .matching_cells
+                                .contains(&(r.id(), self.document.columns()[i].id()));
+                            cell
                         })
                         .collect(),
                 })
@@ -303,7 +321,84 @@ impl DocumentSession {
     /// Read one cell by stable IDs discovered through rows and columns.
     /// Unknown IDs throw UNKNOWN_ROW or UNKNOWN_COLUMN; absent fields are missing.
     pub fn read_cell(&self, row_id: u32, column_id: u32) -> Result<CellSnapshot, EngineError> {
-        Ok(self.document.cell(row_id, column_id)?.into())
+        let mut snapshot: CellSnapshot = self.document.cell(row_id, column_id)?.into();
+        snapshot.matched = self
+            .operations
+            .matching_cells
+            .contains(&(row_id, column_id));
+        Ok(snapshot)
+    }
+
+    /// Stable column ordering; null restores imported order. Does not mutate data.
+    pub fn sort(&mut self, column_id: Option<u32>, descending: bool) -> Result<(), EngineError> {
+        self.operations.sort(&self.document, column_id, descending)
+    }
+    /// Search literal text or bounded Rust regex; retains identities in Rust.
+    pub fn search(&mut self, options: SearchOptions) -> Result<SearchResult, EngineError> {
+        if self.operations.order.len() != self.document.row_count() {
+            self.operations.sort(&self.document, None, false)?;
+        }
+        self.operations.search(&self.document, options)
+    }
+    /// Return one match, without transferring the dataset or match list.
+    pub fn search_match(&self, index: u32) -> Option<SearchMatch> {
+        self.operations.match_at(index)
+    }
+    /// Locate a stable row in the current view.
+    pub fn row_position(&self, row_id: u32) -> Result<u32, EngineError> {
+        self.document.cell(row_id, 1)?;
+        Ok(self
+            .operations
+            .order
+            .iter()
+            .position(|&i| self.document.rows[i].id() == row_id)
+            .unwrap_or((row_id - 1) as usize) as u32)
+    }
+    /// Dirty count is difference from import, not number of operations.
+    pub fn edit_status(&self) -> EditStatus {
+        self.operations.status()
+    }
+    /// Commit literal text with optimistic revision checking. Same values are no-ops.
+    pub fn edit_cell(
+        &mut self,
+        row_id: u32,
+        column_id: u32,
+        value: String,
+        revision: u32,
+    ) -> Result<MutationResult, EngineError> {
+        let result =
+            self.operations
+                .edit(&mut self.document, row_id, column_id, value, revision)?;
+        if result.affected_cells > 0 {
+            self.profiles.clear();
+            self.job = None;
+        }
+        Ok(result)
+    }
+    /// Replace one retained occurrence (index) or all (null), as one transaction.
+    pub fn replace_matches(
+        &mut self,
+        index: Option<u32>,
+        replacement: String,
+        revision: u32,
+    ) -> Result<MutationResult, EngineError> {
+        let result = self
+            .operations
+            .replace(&mut self.document, index, replacement, revision)?;
+        if result.affected_cells > 0 {
+            self.profiles.clear();
+            self.job = None;
+        }
+        Ok(result)
+    }
+    /// Undo or redo one bounded transaction. Sorting and search are not recorded.
+    pub fn history(&mut self, redo: bool) -> Result<MutationResult, EngineError> {
+        let result = self.operations.history(&mut self.document, redo)?;
+        if result.affected_cells > 0 {
+            self.profiles.clear();
+            self.job = None;
+        }
+        Ok(result)
     }
 
     /// Exact column statistics, computed once per cached column. Keeps at most eight

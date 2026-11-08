@@ -1,8 +1,8 @@
-import { platform, signal, Text, View, windowSize } from "nsh";
-import { DataTable, type DataTableRange, type DataTableSelection } from "nsh/base";
+import { effect, platform, signal, Text, View, windowSize } from "nsh";
+import { DataTable, type DataTableCell, type DataTableRange, type DataTableRef, type DataTableSort, type DataTableSelection } from "nsh/base";
 import type { CellSnapshot, ColumnMetadata, DocumentMetadata, DocumentSession, RowWindow } from "rowtation/native";
 import { measuring, record, timeToNextFrame } from "./diagnostics";
-import { loadGridRows, PREVIEW_BYTES } from "./gridRowCache";
+import { gridCellDisplay, loadGridRows, PREVIEW_BYTES } from "./gridRowCache";
 export { cellText, PREVIEW_BYTES } from "./gridRowCache";
 
 export interface CellSelection {
@@ -18,6 +18,12 @@ export function DataGrid(props: {
   session: DocumentSession;
   metadata: DocumentMetadata;
   columns: ColumnMetadata[];
+  version: number;
+  selected: CellSelection | null;
+  sort: DataTableSort | null;
+  onSort: (sort: DataTableSort | null) => void;
+  onEdit: () => void;
+  onReady: (focus: () => void) => void;
   onSelect: (selection: CellSelection | null, column: number | null) => void;
 }) {
   let visibleRows: DataTableRange = { start: 0, end: Math.min(32, props.metadata.rowCount) };
@@ -58,10 +64,32 @@ export function DataGrid(props: {
     props.onSelect({ documentId: props.metadata.id, rowId: row.id, columnId: column.id,
       rowIndex: next.row, columnIndex: next.column, preview: cell ?? row.cells[0] }, column.id);
   }
+  let table: DataTableRef | undefined;
+  props.onReady(() => table?.focus());
+  effect(() => {
+    props.version;
+    cache.set(loadGridRows(null, props.metadata, props.columns, visibleRows, visibleColumns, fetch));
+  });
+  effect(() => {
+    const cell = props.selected;
+    const next = cell ? { row: cell.rowIndex, column: cell.columnIndex } : null;
+    selection.set(next);
+    table?.select(next);
+  });
   // Pointer desktops get a denser grid; touch layouts keep 44-point rows.
   const dense = () => platform.desktop && windowSize().width >= 900;
-  return <DataTable class="flex-1 min-h-0 min-w-0 bg-background" testID="data-grid" accessibilityLabel="Document data"
-    columns={props.columns.map((column) => ({ key: String(column.id), title: column.name || "(unnamed)", width: windowSize().width < 640 ? 148 : 176 }))}
+  const columnWidth = () => windowSize().width < 640 ? 148 : 176;
+  return <DataTable renderCell={cell => {
+      const shown = gridCellDisplay(cell.text);
+      // The renderer slot needs explicit content dimensions for its background and hit bounds.
+      return <View testID={shown.matched ? "search-highlight" : undefined} style={{ height: dense() ? 30 : 40, width: columnWidth() - 24 }}
+        class={"justify-center rounded" + (shown.matched ? " bg-primary/15" : "")}>
+        <Text class="text-[13px] text-foreground line-clamp-1">{shown.text}</Text>
+      </View>;
+    }}
+    class="flex-1 min-h-0 min-w-0 bg-background" testID="data-grid" accessibilityLabel="Document data"
+    ref={ref => { table = ref; table.select(selection()); }} sort={props.sort} onSortChange={e => props.onSort(e.sort)} onDoublePress={() => props.onEdit()}
+    columns={props.columns.map((column) => ({ key: String(column.id), sortable: true, title: column.name || "(unnamed)", width: columnWidth() }))}
     data={cache().data} dataStart={rows().offset} rowCount={props.metadata.rowCount}
     rowHeight={dense() ? 34 : 44} headerHeight={dense() ? 36 : 44} fontSize={13} rowHeader cellSelectable columnSelectable rowSelectable={false}
     movableColumns={false} resizableColumns={false} selectOnModifierPress={false} stripe={false} selection={selection()}
@@ -69,7 +97,7 @@ export function DataGrid(props: {
     onVisibleColumnsChange={e => { visibleColumns = e.range; load(); }} onSelectionChange={e => select(e.selection)}
     renderHeaderCell={cell => <View class="flex-1 flex-row items-center gap-2 px-3">
       <View class="h-4 min-w-5 items-center justify-center rounded bg-muted px-1"><Text class="text-[10px] font-medium text-muted-foreground">Aa</Text></View>
-      <Text class="line-clamp-1 flex-1 text-xs font-medium text-muted-foreground">{cell.title}</Text>
+      <Text class="line-clamp-1 flex-1 text-xs font-medium text-muted-foreground">{cell.title}{cell.sort === "ascending" ? " ↑" : cell.sort === "descending" ? " ↓" : ""}</Text>
     </View>}
     classes={{ root: "border-0", header: "bg-background border-b border-border/70", headerCell: "border-0",
       row: "border-b border-border/50", rowHover: "bg-muted/40", cell: "px-3 text-foreground",

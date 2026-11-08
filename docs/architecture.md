@@ -7,10 +7,17 @@ in `nsh.json`. TSX runs on the browser JavaScript engine; Rust compiles to WASM.
 No backend, cloud storage, persistent document storage or telemetry is introduced.
 
 Rust owns the document, all format parsing/serialization and resource validation.
-TSX owns presentation and transient focus, selection, dialogs and future drafts.
+TSX owns presentation and transient focus, selection, dialogs and editing drafts.
 Returned snapshots may be mirrored in UI signals; they are not a second dataset.
-The import UI and virtualized inspection table are implemented. Sorting/searching,
-editing, replacement, other format adapters and browser downloads remain planned.
+The import UI, virtualized inspection table and Rust data operations are implemented.
+Other format adapters and browser downloads remain planned.
+
+See the [data operations contract](operations.md) for ordering, matching,
+revisions, dirty state, mutation methods and resource limits.
+`src/operations.rs` owns stable ordering, retained matches, sparse baseline values
+and bounded before/after transactions. `DocumentSession` exposes `sort`, `search`,
+`searchMatch`, `rowPosition`, `editStatus`, `editCell`, `replaceMatches` and `history`
+through the registered API. Mutations invalidate cached and in-progress profiles.
 
 `#[native_module("rowtation/native")]` registers `DocumentSession` using
 `Registry::class`. `#[class]`, `#[derive(JsObject)]`, `#[derive(PropEnum)]` and
@@ -48,14 +55,12 @@ empty strings. Blank records are one empty text field. Empty input is zero-by-ze
 
 Document IDs are runtime-unique strings, not persisted IDs. Row and column IDs are
 opaque `u32` identities scoped to a document. The session supplies document context;
-UI keys and selection must retain document ID as well as row/column IDs. Current
-immutable backing storage assigns monotonically increasing IDs and never reorders
-it. Future sort/filter operations should order row IDs in a view, preserving backing
-rows and IDs. Never reuse deleted IDs when mutation is added. Reads are O(1) by ID.
+UI keys and selection must retain document ID as well as row/column IDs. Backing storage assigns monotonically increasing IDs and never reorders
+rows. Sorting orders row identities in a Rust view. Reads are O(1) by ID.
 
-Imported documents start clean at revision zero. Reads, schema queries and export
-do not change either. Future edits must update revision/dirty in Rust and define
-how the UI rejects stale windows; no mutation or undo system is implemented here.
+Imported documents start clean at revision zero. Reads, sorting, search and export
+do not change either. Mutations update revision/dirty in Rust; a UI generation
+invalidates bounded grid windows after mutations and ordering/search changes.
 
 ## Public Rust API
 
@@ -66,10 +71,10 @@ bool) -> Result<Vec<u8>, EngineError>` serializes without changing the document.
 `Document` exposes `id`, `columns`, `row_count`, `column_count`, `source_delimiter`,
 `source_headers`, `revision`, `dirty`, `window(offset, limit)` and
 `cell(row_id, column_id)`. Columns expose ID/name/original name. Rows expose ID and
-stored cells. Dataset mutation and construction from arbitrary external cells are
-not exposed yet. `window` and `cell` borrow storage without cloning. See Rust doc comments for exact
+stored cells. Dataset mutations are exposed by the retained session; construction
+from arbitrary external cells is not exposed. `window` and `cell` borrow storage without cloning. See Rust doc comments for exact
 signatures. The `session` module exposes the NSH transport API
-for Rust callers too; its records implement Default and are non-exhaustive.
+for Rust callers too; its records implement Default.
 
 ## TSX API contract
 
@@ -105,9 +110,15 @@ const output = session.serialize({ delimiter: ",", headers: true });
 | `cancelProfile(): void` | Drop an unfinished `profileStep` scan and its distinct-value table; finished profiles stay cached. The view calls it when the selected column changes, and disposal frees it too. |
 | `metadata(): DocumentMetadata` | `{ id, rowCount, columnCount, revision, dirty, delimiter, headers }`; no row copies. |
 | `columns(): ColumnMetadata[]` | Ordered `{ id, name, originalName }`; originalName is null for generated columns. |
-| `rows({ offset, limit, columnOffset?, columnLimit?, previewBytes?, measure? }): RowsSnapshot` | `{ documentId, revision, offset, columnOffset, rows: [{ id, cells }], rustMs }`; `rustMs` is set only when `measure` is true: Rust's own build time, excluding the copy into JS; cells follow schema order from columnOffset, including missing trailing values. Without previewBytes whole text/number values are copied; with it each value is cut to that many UTF-8 bytes on a character boundary and marked `truncated`. `byteLength` is always the whole length. At most 256 rows; offsets are positions, not IDs. |
-| `readCell(rowId: number, columnId: number): CellSnapshot` | Full value using document-scoped IDs obtained from `rows()`/`columns()`. `{ kind, text, boolean, number, byteLength, truncated }` (never truncated). Only the payload for kind is populated, others null. `kind` is `missing`, `null`, `text`, `boolean` or `number`. |
+| `rows({ offset, limit, columnOffset?, columnLimit?, previewBytes?, measure? }): RowsSnapshot` | `{ documentId, revision, offset, columnOffset, rows: [{ id, cells }], rustMs }`; `rustMs` is set only when `measure` is true: Rust's own build time, excluding the copy into JS; cells follow schema order from columnOffset, including missing trailing values. Without previewBytes whole text/number values are copied; with it each value is cut to that many UTF-8 bytes on a character boundary and marked `truncated`. `byteLength` is always the whole length. `matched` marks cells in the active search. At most 256 rows; offsets are positions, not IDs. |
+| `readCell(rowId: number, columnId: number): CellSnapshot` | Full value using document-scoped IDs obtained from `rows()`/`columns()`. `{ kind, text, boolean, number, byteLength, truncated, matched }` (never truncated). Only the payload for kind is populated, others null. `kind` is `missing`, `null`, `text`, `boolean` or `number`. |
 | `serialize(options: ExportOptions): Uint8Array` | Optional delimiter/headers default to source settings. Whole document only; no filtered export or download. |
+| `sort(columnId, descending): void` | Stable view order; null column resets. Does not change data revision. |
+| `search(options): SearchResult` / `searchMatch(index)` | Retain scoped occurrence IDs/ranges in Rust; return count and one navigable match. |
+| `editCell(rowId, columnId, text, revision)` | Literal text commit using stable IDs and expected revision; same-value commits are no-ops. |
+| `replaceMatches(index, text, revision)` | Replace one occurrence, or all retained matches when index is null; one transaction and exact counts. |
+| `history(redo): MutationResult` / `editStatus()` | Undo/redo one bounded transaction; report dirty cell count and history availability. |
+| `rowPosition(rowId): number` | Locate an existing identity in the current view for selection/scrolling. |
 | `dispose(): void` | NSH frees the Rust value immediately. Calls after disposal throw TypeError. Garbage collection is a fallback; explicitly dispose when closing/replacing a document. |
 
 The inspection viewport keeps only its requested windows, keys rows by stable
@@ -118,8 +129,8 @@ and formatted row objects. Document identity, revision and column-window changes
 invalidate reuse. The inspector copies or shows the whole value through `readCell`. Profile common values are 256-byte previews
 with exact counts and whole byte lengths.
 Import UI must keep the old session until a new constructor succeeds, then dispose
-the old one. PR #3 operations should accept stable IDs and revision expectations
-rather than JS-owned row arrays. These are ownership contracts, not implemented editing methods.
+the old one. Operations accept stable IDs and revision expectations
+rather than JS-owned row arrays. The implemented mutation methods enforce this.
 
 ## CSV/TSV and serialization policies
 
@@ -152,12 +163,14 @@ message starts with `CODE:`. This version does **not** attach a structured JS
 disposal are NSH TypeErrors, distinct from engine errors.
 
 Codes: INVALID_DELIMITER, INVALID_UTF8, INVALID_CSV, INVALID_WINDOW, UNKNOWN_ROW,
-UNKNOWN_COLUMN, LOSSY_EXPORT, SERIALIZE_FAILED and ID_EXHAUSTED. Failed operations
+UNKNOWN_COLUMN, LOSSY_EXPORT, SERIALIZE_FAILED, ID_EXHAUSTED, INVALID_REGEX,
+SEARCH_LIMIT, EDIT_LIMIT, STALE_REVISION, UNKNOWN_MATCH and REVISION_LIMIT. Failed operations
 return no partial dataset/output and do not change a live document. No untrusted
 input path uses unsafe code, unwrap or expect.
 
-There are no caps on input size, rows, columns, stored fields, value length or
-serialized output. The only request bound is 256 rows per window, which keeps
+There are no caps on import size, rows, columns, stored fields, value length or
+serialized output. Search/edit requests have [operation limits](operations.md).
+Row windows are limited to 256 rows, which keeps
 virtualized reads incremental. End-of-document windows contain the remaining rows;
 offset equal to rowCount and zero limits are valid empty windows. Larger offsets
 or limits fail with INVALID_WINDOW. Memory exhaustion is not a recoverable engine
@@ -196,8 +209,7 @@ Verify `cargo fmt --check`, `nsh check`, `nsh build`, `nsh test`,
 package verifies the in-memory csv dependency path compiles to wasm32; browser
 smoke tests verify runtime compatibility. The large-input thresholds are not
 large-file responsiveness benchmarks. Measure representative browsers before
-adding workers. Editing, structured-format mapping, safe download policy and undo/redo remain
-later work. Browser file and layout regressions run through the synthetic host
+adding workers. Structured-format mapping and safe download policy remain later work. Browser file and layout regressions run through the synthetic host
 used by scripts/test-browser-files.sh.
 
 ## Import and inspection UI
@@ -235,7 +247,7 @@ scrolling, hit testing, focus and keyboard navigation belong to NSH. TSX transla
 only the current window's cells to display text. Selection retains document, row
 and column IDs independently of rendered cells. Keyboard jumps can read a single
 row before the visible-range event arrives. The inspector shows the selected
-value with its byte size; the grid is read-only. Rows are 34 points on pointer
+value with its byte size; the grid opens a draft editor by stable ID. Rows are 34 points on pointer
 desktops at least 900 points wide and 44 points elsewhere.
 
 `DocumentSession.profile(columnId)` computes exact distinct/empty/missing counts

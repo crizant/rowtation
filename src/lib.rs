@@ -6,6 +6,7 @@ pub mod document;
 pub mod error;
 pub mod formats;
 pub mod inspection;
+pub mod operations;
 pub mod session;
 pub mod source;
 
