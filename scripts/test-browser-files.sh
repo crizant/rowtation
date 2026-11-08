@@ -55,6 +55,7 @@ for (const [key, message] of [
   ["F7", "unsupported.json: Choose a .csv or .tsv file. Other formats are not supported yet."],
   ["F4", "invalid-utf8.csv: INVALID_UTF8: Save the file as UTF-8 CSV or TSV and try again."],
 ]) {
+  await app.press("More");
   await app.press("Import…");
   await app.press("Choose another file…");
   await app.waitFor("Import “picked.csv”");
@@ -68,6 +69,7 @@ async function releaseRead() {
   await app.keyboard.press("F3");
   await app.wait(50);
 }
+await app.press("More");
 await app.press("Import…");
 await app.keyboard.press("F2");
 await app.press("Cancel");

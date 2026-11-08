@@ -58,7 +58,7 @@ Verified on 2026-11-08 with NSH 0.4.0 and Chrome for Testing:
 - `nsh test`: 68 passed, with 2 ignored stress tests (41 Rust tests and 27 UI/cache workflows). The added workflows cover dirty close/replace confirmation, clipboard text while a cell is highlighted, double-press target selection, the cell menu, keyboard find/undo/redo, and the compact mobile find bar.
 - `nsh test --target web --browser <Chromium>`: 27 passed, including removal of search highlights after closing Find and the compact mobile find bar.
 - Native `cargo clippy --all-targets` with warnings denied: passed. The operations library was not changed in this pass.
-- A phone-width check of the running web app shows the filename and format on two lines, the find field beside previous/next, and Replace… and Options on the next row. Match tint is visible. `tests/operations-layouts.steps.js`, `scripts/test-browser-files.sh`, and `nsh package` were not re-run for this chrome change.
+- A phone-width check of the running web app shows the filename and format on two lines, the find field beside previous/next, and Replace… and Options on the next row. Match tint is visible. `scripts/test-browser-files.sh` passed after opening Import… from More on the wide document. `tests/operations-layouts.steps.js` and `nsh package` were not re-run for this chrome change.
 - The test browser does not report a desktop pointer, so the 34-point desktop grid density and compact controls are not shown in these captures. Import-layout captures were not regenerated for this operations pass.
 
 ## Limits
