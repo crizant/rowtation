@@ -1,8 +1,8 @@
-import { platform, signal, Text, View, windowSize } from "nsh";
-import { DataTable, type DataTableRange, type DataTableSelection } from "nsh/base";
+import { computed, effect, platform, signal, Text, View, windowSize } from "nsh";
+import { DataTable, type DataTableCell, type DataTableRange, type DataTableRef, type DataTableSort, type DataTableSelection } from "nsh/base";
 import type { CellSnapshot, ColumnMetadata, DocumentMetadata, DocumentSession, RowWindow } from "rowtation/native";
 import { measuring, record, timeToNextFrame } from "./diagnostics";
-import { loadGridRows, PREVIEW_BYTES } from "./gridRowCache";
+import { loadGridRows, PREVIEW_BYTES, utf8Span } from "./gridRowCache";
 export { cellText, PREVIEW_BYTES } from "./gridRowCache";
 
 export interface CellSelection {
@@ -18,7 +18,15 @@ export function DataGrid(props: {
   session: DocumentSession;
   metadata: DocumentMetadata;
   columns: ColumnMetadata[];
+  version: number;
+  selected: CellSelection | null;
+  sort: DataTableSort | null;
+  onSort: (sort: DataTableSort | null) => void;
+  onEdit: (rowIndex: number, columnIndex: number) => void;
+  onCellMenu: (rowIndex: number, columnIndex: number, x: number, y: number) => void;
+  onReady: (focus: () => void) => void;
   onSelect: (selection: CellSelection | null, column: number | null) => void;
+  activeMatch?: { row: number; column: number; start: number; end: number } | null;
 }) {
   let visibleRows: DataTableRange = { start: 0, end: Math.min(32, props.metadata.rowCount) };
   // Start conservatively until the table reports its measured column range.
@@ -58,10 +66,60 @@ export function DataGrid(props: {
     props.onSelect({ documentId: props.metadata.id, rowId: row.id, columnId: column.id,
       rowIndex: next.row, columnIndex: next.column, preview: cell ?? row.cells[0] }, column.id);
   }
+  let table: DataTableRef | undefined;
+  props.onReady(() => table?.focus());
+  const active = signal(props.activeMatch ?? null);
+  effect(() => { active.set(props.activeMatch ?? null); });
+  effect(() => {
+    props.version;
+    cache.set(loadGridRows(null, props.metadata, props.columns, visibleRows, visibleColumns, fetch));
+  });
+  effect(() => {
+    const cell = props.selected;
+    const next = cell ? { row: cell.rowIndex, column: cell.columnIndex } : null;
+    selection.set(next);
+    table?.select(next);
+  });
   // Pointer desktops get a denser grid; touch layouts keep 44-point rows.
   const dense = () => platform.desktop && windowSize().width >= 900;
-  return <DataTable class="flex-1 min-h-0 min-w-0 bg-background" testID="data-grid" accessibilityLabel="Document data"
-    columns={props.columns.map((column) => ({ key: String(column.id), title: column.name || "(unnamed)", width: windowSize().width < 640 ? 148 : 176 }))}
+  const columnWidth = () => windowSize().width < 640 ? 148 : 176;
+  // Keep a stable renderer identity: a row-window refill must not reset the
+  // table's renderCell prop. Ordinary pointer cells use NSH's native text path.
+  // Touch cells retain the lightweight wrapper for NSH 0.4's onLongPress event.
+  const highlights = computed(() => cache().snapshot.rows.some(row => row.cells.some(cell => cell.matched)));
+  const renderCell = (cell: DataTableCell) => <GridCell text={cell.text} row={cell.row} column={cell.column} />;
+  function GridCell(cell: { text: string; row: number; column: number }) {
+    // Overlapping cache windows reuse snapshots. Only this memo subscribes to
+    // the whole cache; unchanged cells do not reapply text, spans or styles.
+    const snapshot = computed(() => {
+      const current = cache().snapshot;
+      return current.rows[cell.row - current.offset]?.cells[cell.column - current.columnOffset];
+    });
+    const matched = computed(() => !!snapshot()?.matched);
+    const occurrence = computed(() => {
+      const mark = active();
+      if (!mark || mark.row !== cell.row || mark.column !== cell.column) return null;
+      const snap = snapshot();
+      const split = utf8Span(snap?.text ?? "", mark.start, mark.end);
+      return split?.hit ? { ...split, after: split.after + (snap?.truncated ? "…" : "") } : null;
+    });
+    return <View testID={matched() ? "search-highlight" : "grid-custom-cell"}
+      onLongPress={() => props.onCellMenu(cell.row, cell.column, 16, 120)}
+      style={{ height: dense() ? 30 : 40, width: columnWidth() - 24 }}
+      class={"justify-center rounded" + (matched() ? " bg-primary/15" : "")}>
+      <If when={occurrence()} else={<Text class="text-[13px] text-foreground line-clamp-1">{cell.text}</Text>}>
+        {split => <Text class="text-[13px] text-foreground line-clamp-1">{split().before}<Text
+          testID="active-match" class="rounded-sm bg-primary/50 text-foreground underline"
+          style={{ textDecorationLine: "underline" }}>{split().hit}</Text>{split().after}</Text>}
+      </If>
+    </View>;
+  }
+  return <DataTable renderCell={highlights() || !platform.desktop ? renderCell : undefined}
+    class="flex-1 min-h-0 min-w-0 bg-background" testID="data-grid" accessibilityLabel="Document data"
+    ref={ref => { table = ref; table.select(selection()); }} sort={props.sort} onSortChange={e => props.onSort(e.sort)}
+    onDoublePress={e => { if (e.target.row != null && e.target.column != null) props.onEdit(e.target.row, e.target.column); }}
+    onContextMenu={e => { if (e.row != null && e.column != null) props.onCellMenu(e.row, e.column, e.x, e.y); }}
+    columns={props.columns.map((column) => ({ key: String(column.id), sortable: true, title: column.name || "(unnamed)", width: columnWidth() }))}
     data={cache().data} dataStart={rows().offset} rowCount={props.metadata.rowCount}
     rowHeight={dense() ? 34 : 44} headerHeight={dense() ? 36 : 44} fontSize={13} rowHeader cellSelectable columnSelectable rowSelectable={false}
     movableColumns={false} resizableColumns={false} selectOnModifierPress={false} stripe={false} selection={selection()}
@@ -74,6 +132,8 @@ export function DataGrid(props: {
     classes={{ root: "border-0", header: "bg-background border-b border-border/70", headerCell: "border-0",
       row: "border-b border-border/50", rowHover: "bg-muted/40", cell: "px-3 text-foreground",
       cellSelected: "bg-background border-2 border-foreground rounded-[3px]", cellColumnSelected: "bg-muted/50",
+      sortIndicator: "text-muted-foreground", sortAscending: "text-muted-foreground selected:text-foreground",
+      sortDescending: "text-muted-foreground selected:text-foreground",
       rowHeader: "text-muted-foreground bg-background text-xs", rowHeaderCorner: "bg-background" }}
     empty={<View class="flex-1 items-center justify-center gap-2 p-6"><Text class="text-foreground">No data rows</Text>
       <Text class="text-sm text-muted-foreground">This document is empty or contains only headers.</Text></View>} />;

@@ -4,7 +4,7 @@
 
 Rowtation converts structured data in the browser. The workflow is import →
 inspect → transform → export. The Rust document core and CSV/TSV
-parser/serializer and CSV/TSV import/inspection are implemented. Transformation,
+parser/serializer and CSV/TSV import/inspection are implemented. Sorting, search, editing, find/replace and bounded undo/redo are implemented;
 other formats and download workflows below remain planned. See the
 architecture for the implemented value, header, delimiter and resource policies.
 
@@ -14,10 +14,10 @@ architecture for the implemented value, header, delimiter and resource policies.
 - Rust delimiter suggestion, explicit header/separator review, actionable parsing
   errors, loading and empty states, atomic document replacement.
 - Virtualized two-axis table with row numbers, sticky headers, cell selection and
-  keyboard navigation. Values remain literal text and are shown in full.
+  keyboard navigation. Values remain literal text; long values use grid previews.
 - Desktop column inspector and narrow-browser contextual panel: exact unique,
   empty and missing counts, five common values, source settings and selection.
-- In-memory active document only. No history or persistence; closing/replacing it
+- In-memory active document only. No recent history or persistence; closing/replacing it
   disposes its retained Rust session. No upload or backend.
 
 ## Planned import extensions
@@ -30,15 +30,19 @@ architecture for the implemented value, header, delimiter and resource policies.
 - Report malformed input with actionable location details when available.
 - Offer worksheet selection for workbooks with multiple sheets.
 
-## Planned table transformations
+## Implemented table operations
 
-- Show headers, row counts and typed cell values in a virtualized table.
+- Show headers, row counts and literal text values in a virtualized table.
 - Sort columns with a visible direction and deterministic ordering.
 - Search data with visible matching rows or cells and a result count.
-- Edit cells without losing row identity when sorting or filtering changes.
-- Find and replace with visible match scope and separate Replace and Replace all
-  actions. Preview affected counts before a bulk replacement.
+- Edit cells without losing row identity when sorting or searching changes.
+- Find and replace with visible match scope/count and separate Replace and Replace all
+  actions, with exact affected-cell and occurrence counts after replacement.
 - Show unsaved edits and preserve the document after a failed operation.
+- Bounded transaction undo/redo and lazy revision-aware column statistics.
+
+See [operation semantics and limits](operations.md) for exact matching, sorting,
+replacement and history behavior.
 
 ## Planned export
 
@@ -72,7 +76,8 @@ architecture for the implemented value, header, delimiter and resource policies.
 - Null versus empty string versus absent field; mixed-type columns and coercion.
 - Header detection, encodings, delimiters and malformed-row recovery.
 - Excel dates, formulas versus cached values, multiple sheets and precision.
-- Search semantics, sort collation, replacement type rules and export ordering.
-- Undo/redo, regex replacement and persistence are not initial commitments.
+- Export ordering for formats that are not implemented yet.
+- Persistence is not a current commitment. Search, sort, replacement and undo
+  behavior is specified in operations.md.
 
 Record these decisions with fixtures and tests before extending format support.

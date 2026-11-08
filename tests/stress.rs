@@ -46,6 +46,29 @@ fn time<T>(label: &str, run: impl FnOnce() -> T) -> T {
     result
 }
 
+fn report_search(
+    label: &str,
+    run: impl FnOnce() -> Result<
+        nsh_app_rowtation::operations::SearchResult,
+        nsh_app_rowtation::error::EngineError,
+    >,
+) {
+    let start = Instant::now();
+    match run() {
+        Ok(result) => println!(
+            "{label:<44} {:>10.2} ms ({} matches)",
+            start.elapsed().as_secs_f64() * 1000.0,
+            result.count
+        ),
+        Err(error) => println!(
+            "{label:<44} {:>10.2} ms ({}: {})",
+            start.elapsed().as_secs_f64() * 1000.0,
+            error.code(),
+            error.message()
+        ),
+    }
+}
+
 #[test]
 #[ignore = "benchmark; run in release with --ignored --nocapture"]
 fn benchmark_engine() {
@@ -53,10 +76,16 @@ fn benchmark_engine() {
         .ok()
         .and_then(|value| value.parse().ok())
         .unwrap_or(64);
+    let rows_limit: Option<usize> = std::env::var("ROWTATION_BENCH_ROWS")
+        .ok()
+        .and_then(|value| value.parse().ok());
     let mut text = String::from("order_id,customer,country,status,amount,note\n");
     let (countries, statuses) = (["AU", "NZ", "JP", "US", "GB"], ["paid", "open", "void"]);
     let mut row = 0usize;
-    while text.len() < mib * 1024 * 1024 {
+    while match rows_limit {
+        Some(limit) => row < limit,
+        None => text.len() < mib * 1024 * 1024,
+    } {
         text.push_str(&format!(
             "{:08},customer-{},{},{},{}.{:02},\"note {}, with comma\"\n",
             row,
@@ -119,6 +148,46 @@ fn benchmark_engine() {
     }
 
     let columns = session.columns();
+    let country = columns.iter().find(|c| c.name == "country").unwrap().id;
+    let status = columns.iter().find(|c| c.name == "status").unwrap().id;
+    let order_id = columns.iter().find(|c| c.name == "order_id").unwrap().id;
+    time("sort country ascending", || {
+        session.sort(Some(country), false).unwrap()
+    });
+    time("sort country descending", || {
+        session.sort(Some(country), true).unwrap()
+    });
+    time("reset imported order", || {
+        session.sort(None, false).unwrap()
+    });
+    // Search and sort run on the calling thread. These timings are not an import cap.
+    let scoped = time("search order_id for 00000042", || {
+        session
+            .search(nsh_app_rowtation::operations::SearchOptions {
+                term: "00000042".into(),
+                column_id: Some(order_id),
+                case_sensitive: Some(false),
+                regex: Some(false),
+            })
+            .unwrap()
+    });
+    println!("scoped matches: {}", scoped.count);
+    report_search("search status for paid", || {
+        session.search(nsh_app_rowtation::operations::SearchOptions {
+            term: "paid".into(),
+            column_id: Some(status),
+            case_sensitive: Some(false),
+            regex: Some(false),
+        })
+    });
+    report_search("search all columns for an absent token", || {
+        session.search(nsh_app_rowtation::operations::SearchOptions {
+            term: "rowtation-absent".into(),
+            column_id: None,
+            case_sensitive: Some(false),
+            regex: Some(false),
+        })
+    });
     let first = columns[0].id;
     let (mut slices, mut longest, start) = (0, 0.0f64, Instant::now());
     loop {

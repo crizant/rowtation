@@ -1,6 +1,6 @@
 import { expect, test } from "nsh/test";
 import type { DocumentMetadata, RowWindow, RowsSnapshot } from "rowtation/native";
-import { loadGridRows, PREVIEW_BYTES } from "./gridRowCache";
+import { loadGridRows, previewHolds, PREVIEW_BYTES, utf8Prefix, utf8Span } from "./gridRowCache";
 
 function fixture(rowCount = 2000) {
   const metadata: DocumentMetadata = { id: "synthetic", revision: 0, rowCount, columnCount: 40, dirty: false, delimiter: ",", headers: true };
@@ -10,7 +10,7 @@ function fixture(rowCount = 2000) {
     calls.push(window);
     return { documentId: metadata.id, revision: metadata.revision, offset: window.offset, columnOffset: window.columnOffset ?? 0,
       rows: Array.from({ length: window.limit }, (_, i) => ({ id: window.offset + i,
-        cells: Array.from({ length: window.columnLimit ?? 40 }, (_, column) => ({ kind: "text", byteLength: 8, truncated: false, text: `r${window.offset + i}c${(window.columnOffset ?? 0) + column}` })) })) };
+        cells: Array.from({ length: window.columnLimit ?? 40 }, (_, column) => ({ kind: "text", byteLength: 8, truncated: false, matched: false, text: `r${window.offset + i}c${(window.columnOffset ?? 0) + column}` })) })) };
   };
   const load = (previous: ReturnType<typeof loadGridRows> | null, start: number, end: number, columnStart = 0, columnEnd = 4) =>
     loadGridRows(previous, metadata, columns, { start, end }, { start: columnStart, end: columnEnd }, fetch);
@@ -110,6 +110,28 @@ test("grid cache ignores transient empty viewport ranges", () => {
   const visible = load(initial, 1500, 1524);
   expect(calls.length).toBe(2);
   expect(visible.data[1500 - visible.snapshot.offset]["0"]).toBe("r1500c0");
+});
+
+test("preview ranges split on UTF-8 boundaries and stop at 512 bytes", () => {
+  expect(utf8Span("Brisbane Brisbane", 0, 8)).toEqual({ before: "", hit: "Brisbane", after: " Brisbane" });
+  expect(utf8Span("Brisbane Brisbane", 9, 17)).toEqual({ before: "Brisbane ", hit: "Brisbane", after: "" });
+  expect(utf8Span("a😀b", 1, 5)).toEqual({ before: "a", hit: "😀", after: "b" });
+  expect(utf8Span("café", 3, 4)).toBe(null);
+  const filler = "x".repeat(PREVIEW_BYTES);
+  expect(utf8Prefix(`${filler}NEEDLE`)).toBe(filler);
+  expect(previewHolds(`${filler}NEEDLE`, PREVIEW_BYTES, PREVIEW_BYTES + 6)).toBe(false);
+  expect(previewHolds(`${"x".repeat(500)}NEEDLE`, 500, 506)).toBe(true);
+  expect(utf8Prefix("é".repeat(300)).length).toBe(256);
+});
+
+test("grid cache keeps search flags on the snapshot and out of the cell text", () => {
+  const metadata: DocumentMetadata = { id: "synthetic", revision: 0, rowCount: 1, columnCount: 1, dirty: false, delimiter: ",", headers: true };
+  const loaded = loadGridRows(null, metadata, [{ id: 0, name: "city" }], { start: 0, end: 1 }, { start: 0, end: 1 }, () => ({
+    documentId: metadata.id, revision: 0, offset: 0, columnOffset: 0,
+    rows: [{ id: 1, cells: [{ kind: "text", byteLength: 8, truncated: false, matched: true, text: "Brisbane" }] }],
+  }));
+  expect(loaded.snapshot.rows[0].cells[0].matched).toBe(true);
+  expect(loaded.data[0]["0"]).toBe("Brisbane");
 });
 
 test("grid cache handles small and empty documents without repeated fetches", () => {

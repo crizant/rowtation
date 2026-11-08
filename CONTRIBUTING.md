@@ -15,7 +15,7 @@ cargo fmt --check
 nsh check
 nsh build
 nsh test
-nsh test --target web
+scripts/test-browser.sh
 scripts/test-browser-files.sh
 nsh package --target web -o dist
 ```
@@ -41,7 +41,7 @@ requests targeting `main`, pushes to `main`, and manual workflow runs:
 - `Rust formatting`: `cargo fmt --check`, with only Rust and rustfmt setup.
 - `Static checks and headless tests`: `nsh check`, `nsh build`, then `nsh test`,
   sharing compilation within the job.
-- `Browser and WASM integration`: `nsh test --target web`, local file workflow checks, then `nsh package --target web -o dist`, using installed Chrome.
+- `Browser and WASM integration`: `scripts/test-browser.sh`, local file workflow checks, then `nsh package --target web -o dist`, using installed Chrome.
   This job installs/caches the wasm-bindgen CLI matching Cargo.lock.
 
 The two NSH jobs share a matrix definition with fail-fast disabled, so a failure

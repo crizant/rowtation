@@ -1,6 +1,6 @@
-import { cleanup, Clipboard, Image, keymap, mount, platform, Scroll, signal, Text, View, windowSize } from "nsh";
-import { Button as BaseButton, Toolbar } from "nsh/base";
-import { BrowserImport, BrowserStyles, DocumentSession, ImportSource, type ColumnMetadata, type ColumnProfile, type DocumentMetadata, type ImportAnalysis, type LocalImport } from "rowtation/native";
+import { cleanup, Clipboard, effect, Image, keymap, mount, platform, Scroll, signal, Text, View, windowSize, type InputRef } from "nsh";
+import { AlertDialog, Button as BaseButton, Menu, MenuItem, MenuSeparator, Toolbar } from "nsh/base";
+import { BrowserImport, BrowserStyles, DocumentSession, ImportSource, type ColumnMetadata, type ColumnProfile, type DocumentMetadata, type ImportAnalysis, type LocalImport, type SearchMatch, type SearchResult } from "rowtation/native";
 import appIcon from "./assets/icon.svg";
 import { ActionList, ActionRow } from "./components/ActionList";
 import { Badge } from "./components/Badge";
@@ -14,6 +14,7 @@ import { Input } from "./components/Input";
 import { Inspector } from "./components/Inspector";
 import { Checkbox } from "./components/Checkbox";
 import { diagnosticsOn, measurements, record, timed, timeToNextFrame, wasmMemory } from "./components/diagnostics";
+import { PREVIEW_BYTES } from "./components/gridRowCache";
 import { ValueDialog } from "./components/ValueDialog";
 
 interface OpenDocument {
@@ -24,8 +25,59 @@ interface OpenDocument {
   dispose: () => void;
 }
 
+function MenuRow(props: { label: string; disabled?: boolean; onSelect: () => void }) {
+  return <MenuItem disabled={props.disabled} onSelect={() => props.onSelect()}
+    class="min-h-11 cursor-pointer flex-row items-center rounded-lg px-3 hover:bg-muted active:bg-muted focus:bg-muted disabled:cursor-not-allowed disabled:opacity-50 md:min-h-9">
+    <Text class="text-sm text-foreground">{props.label}</Text>
+  </MenuItem>;
+}
+
+function EditInput(props: { value: string; onChange: (value: string) => void; onCommit: (tab?: boolean) => void; onCancel: () => void; onBind: (blur: () => void) => void }) {
+  let input: InputRef | undefined;
+  props.onBind(() => input?.blur());
+  function commit(tab?: boolean) { input?.blur(); props.onCommit(tab); }
+  function cancel() { input?.blur(); props.onCancel(); }
+  // NSH Input does not report Tab through onKeyPress; this binding lives only with the editor.
+  keymap.bind("tab", () => commit(true), { when: "always" });
+  keymap.bind("escape", () => cancel(), { when: "always" });
+  return <Input ref={node => { input = node; }} label="Cell value" testID="cell-draft" value={props.value} onChange={value => props.onChange(value)} autoFocus multiline
+    submitBehavior="submit" onSubmit={() => commit()} />;
+}
+
 function DocumentView(props: { document: OpenDocument; onClose: () => void; onImport: () => void }) {
   cleanup(() => props.document.dispose());
+  const metadata = signal(props.document.metadata);
+  const version = signal(0);
+  const edits = signal(props.document.session.editStatus());
+  const sorting = signal<import("nsh/base").DataTableSort | null>(null);
+  const finding = signal(false);
+  const replacing = signal(false);
+  const menuPoint = signal<{ x: number; y: number } | null>(null);
+  const term = signal("");
+  const replacement = signal("");
+  const sensitive = signal(false);
+  const regex = signal(false);
+  const scoped = signal(false);
+  const scopeId = signal<number | null>(null);
+  const results = signal<SearchResult>({ count: 0, current: null });
+  const matchIndex = signal(0);
+  const activeMatch = signal<SearchMatch | null>(null);
+  const activeSnippet = signal("");
+  const querySelection = signal<{ start: number; end: number } | undefined>(undefined);
+  const pending = signal(false);
+  const operationError = signal("");
+  const notice = signal("");
+  const editing = signal(false);
+  const editDraft = signal("");
+  let focusGrid = () => {};
+  let findInput: InputRef | undefined;
+  let selectQuery = false;
+  let searchTimer: ReturnType<typeof setTimeout> | undefined;
+  let focusTimer: ReturnType<typeof setTimeout> | undefined;
+  let appliedKey = "";
+  let held: { rowId: number; columnId: number; start: number } | null = null;
+  let heldIndex = 0;
+  cleanup(() => { clearTimeout(searchTimer); clearTimeout(focusTimer); });
   const selection = signal<CellSelection | null>(null);
   const column = signal<ColumnMetadata | null>(null);
   const profile = signal<ColumnProfile | null>(null);
@@ -97,25 +149,310 @@ function DocumentView(props: { document: OpenDocument; onClose: () => void; onIm
     clearTimeout(copied);
     copied = setTimeout(() => copyLabel.set("Copy value"), 1500);
   }
+  function attempt(action: () => void) {
+    operationError.set(""); notice.set("");
+    try { action(); } catch (cause) { operationError.set(cause instanceof Error ? cause.message : String(cause)); }
+  }
+  function refresh() {
+    metadata.set(props.document.session.metadata());
+    edits.set(props.document.session.editStatus());
+    const current = selection();
+    if (current) selection.set({ ...current, rowIndex: props.document.session.rowPosition(current.rowId), preview: props.document.session.readCell(current.rowId, current.columnId) });
+    stopProfile(); profile.set(null);
+    if (wide() || info()) ensureProfile();
+    runSearch(finding());
+  }
+  function queryKey() {
+    return `${term()}\0${sensitive()}\0${regex()}\0${scoped() ? scopeId() ?? "" : ""}`;
+  }
+  function resolveIndex(count: number) {
+    const fallback = Math.min(heldIndex, Math.max(count - 1, 0));
+    if (!held || count < 1) return fallback;
+    return props.document.session.searchIndex(held.rowId, held.columnId, held.start, heldIndex) ?? fallback;
+  }
+  function showSnippet(index: number) {
+    activeSnippet.set(props.document.session.searchSnippet(index, PREVIEW_BYTES) ?? "");
+  }
+  function remember(index: number) {
+    const match = props.document.session.searchMatch(index);
+    if (!match) return null;
+    heldIndex = index;
+    held = { rowId: match.rowId, columnId: match.columnId, start: match.start };
+    matchIndex.set(index);
+    activeMatch.set(match);
+    return match;
+  }
+  function runSearch(reveal = true, mode: "preserve" | "restart" = "preserve") {
+    clearTimeout(searchTimer);
+    searchTimer = undefined;
+    pending.set(false);
+    const activeTerm = finding() ? term() : "";
+    try {
+      const result = props.document.session.search({
+        term: activeTerm,
+        columnId: activeTerm && scoped() ? scopeId() : null,
+        caseSensitive: sensitive(),
+        regex: regex(),
+      });
+      appliedKey = queryKey();
+      operationError.set("");
+      results.set(result);
+      if (!result.count) {
+        matchIndex.set(0);
+        activeMatch.set(null);
+        activeSnippet.set("");
+        if (mode === "restart" || !activeTerm) { held = null; heldIndex = 0; }
+      } else if (reveal) revealMatch(mode === "restart" ? 0 : resolveIndex(result.count));
+      else {
+        const index = mode === "restart" ? 0 : resolveIndex(result.count);
+        if (remember(index)) showSnippet(index);
+      }
+    } catch (cause) {
+      results.set({ count: 0, current: null });
+      matchIndex.set(0);
+      activeMatch.set(null);
+      activeSnippet.set("");
+      if (mode === "restart") { held = null; heldIndex = 0; }
+      appliedKey = queryKey();
+      operationError.set(cause instanceof Error ? cause.message : String(cause));
+    }
+    version.set(version() + 1);
+  }
+  function queueSearch() {
+    clearTimeout(searchTimer);
+    pending.set(true);
+    operationError.set("");
+    searchTimer = setTimeout(() => { searchTimer = undefined; attempt(() => runSearch(true, "restart")); }, 180);
+  }
+  function revealMatch(index: number) {
+    if (pending()) return;
+    const length = results().count;
+    if (!length) return;
+    const next = (index % length + length) % length;
+    const match = remember(next);
+    if (!match) return;
+    showSnippet(next);
+    const columnIndex = props.document.columns.findIndex(c => c.id === match.columnId);
+    if (columnIndex < 0) return;
+    const row = props.document.session.rows({ offset: match.rowIndex, limit: 1, columnOffset: columnIndex, columnLimit: 1, previewBytes: PREVIEW_BYTES }).rows[0];
+    const preview = row?.cells[0];
+    if (!preview) return;
+    select({ documentId: metadata().id, rowId: match.rowId, columnId: match.columnId, rowIndex: match.rowIndex, columnIndex, preview }, match.columnId);
+  }
+  function searchStatus() {
+    if (!term()) return "";
+    if (pending()) return "Searching…";
+    if (operationError()) return "";
+    if (!results().count) return "No matches";
+    return `${matchIndex() + 1} of ${results().count} matches`;
+  }
+  function sort(next: import("nsh/base").DataTableSort | null) {
+    attempt(() => {
+      props.document.session.sort(next ? Number(next.key) : null, next?.direction === "descending");
+      sorting.set(next); refresh();
+    });
+  }
+  function history(redo: boolean) { attempt(() => { props.document.session.history(redo); refresh(); }); }
+  function beginEdit() { if (selection()) { editDraft.set(wholeValue() ?? ""); editing.set(true); } }
+  function editAt(rowIndex: number, columnIndex: number) {
+    const row = props.document.session.rows({ offset: rowIndex, limit: 1, columnOffset: columnIndex, columnLimit: 1 }).rows[0];
+    if (!row) return;
+    const columnId = props.document.columns[columnIndex].id;
+    select({ documentId: metadata().id, rowId: row.id, columnId, rowIndex, columnIndex, preview: row.cells[0] }, columnId);
+    beginEdit();
+  }
+  function openCellMenu(rowIndex: number, columnIndex: number, x: number, y: number) {
+    const row = props.document.session.rows({ offset: rowIndex, limit: 1, columnOffset: columnIndex, columnLimit: 1 }).rows[0];
+    if (!row) return;
+    const columnId = props.document.columns[columnIndex].id;
+    select({ documentId: metadata().id, rowId: row.id, columnId, rowIndex, columnIndex, preview: row.cells[0] }, columnId);
+    menuPoint.set({ x, y });
+  }
+  function confirmDiscard(action: () => void) {
+    const modified = edits().modifiedCells;
+    if (!modified) { action(); return; }
+    void AlertDialog.show({
+      title: "Discard unsaved changes?",
+      description: `${count(modified, "modified cell", "modified cells")} will be dropped. Rowtation cannot export or download this document yet.`,
+      closeOnEscape: true,
+      actions: [
+        { id: "keep", label: "Keep editing", role: "cancel" },
+        { id: "discard", label: "Discard changes", role: "destructive" },
+      ],
+    }).then(result => { if (result.action === "discard") action(); });
+  }
+  function focusQuery() {
+    const input = findInput;
+    if (!input) return;
+    selectQuery = false;
+    const length = term().length;
+    querySelection.set({ start: 0, end: length });
+    input.focus();
+    input.setSelection(0, length);
+  }
+  function openFind() {
+    if (editing()) return;
+    selectQuery = true;
+    const wasOpen = finding();
+    finding.set(true);
+    if (!wasOpen && term()) attempt(() => runSearch(true));
+    if (wasOpen) focusQuery();
+  }
+  function closeFind() {
+    findInput?.blur();
+    finding.set(false);
+    replacing.set(false);
+    attempt(() => runSearch(false));
+    clearTimeout(focusTimer);
+    focusGrid();
+  }
+  function toggleFind() { if (finding()) closeFind(); else openFind(); }
+  function stepMatch(delta: number) {
+    if (!finding() || editing() || pending()) return;
+    if (queryKey() !== appliedKey) {
+      attempt(() => runSearch(true, "restart"));
+      if (delta < 0 && results().count > 1) revealMatch(results().count - 1);
+      return;
+    }
+    revealMatch(matchIndex() + delta);
+  }
+  function toggleOption(kind: "case" | "regex" | "scope") {
+    if (kind === "case") sensitive.set(!sensitive());
+    else if (kind === "regex") regex.set(!regex());
+    else if (scoped()) scoped.set(false);
+    else {
+      const id = column()?.id;
+      if (id == null) return;
+      scopeId.set(id);
+      scoped.set(true);
+    }
+    attempt(() => runSearch(true));
+  }
+  let blurEditor = () => {};
+  function releaseEditor(after?: () => void) {
+    blurEditor();
+    clearTimeout(focusTimer);
+    focusTimer = setTimeout(() => {
+      editing.set(false);
+      after?.();
+      focusGrid();
+    }, 0);
+  }
+  function cancelEdit() { releaseEditor(); }
+  function commitEdit(tab = false) {
+    attempt(() => {
+      const current = selection(); if (!current) return;
+      props.document.session.editCell(current.rowId, current.columnId, editDraft(), metadata().revision);
+      const position = current.rowIndex * metadata().columnCount + current.columnIndex + 1;
+      releaseEditor(() => {
+        refresh();
+        if (tab && metadata().columnCount) {
+          const rowIndex = Math.floor(position / metadata().columnCount), columnIndex = position % metadata().columnCount;
+          if (rowIndex < metadata().rowCount) {
+            const row = props.document.session.rows({ offset: rowIndex, limit: 1, columnOffset: columnIndex, columnLimit: 1 }).rows[0];
+            const columnId = props.document.columns[columnIndex].id;
+            select({ documentId: metadata().id, rowId: row.id, columnId, rowIndex, columnIndex, preview: row.cells[0] }, columnId);
+          }
+        }
+      });
+    });
+  }
+  function clearCell() { attempt(() => { const cell = selection(); if (cell) { props.document.session.editCell(cell.rowId, cell.columnId, "", metadata().revision); refresh(); } }); }
+  function replace(all: boolean) {
+    attempt(() => {
+      if (searchTimer || queryKey() !== appliedKey) runSearch(true, "restart");
+      if (!results().count || operationError()) return;
+      const result = props.document.session.replaceMatches(all ? null : matchIndex(), replacement(), metadata().revision);
+      refresh(); notice.set(`${count(result.replacements, "replacement", "replacements")} in ${count(result.affectedCells, "cell", "cells")}`);
+    });
+  }
+  keymap.bind("mod+z", () => history(false), { when: "notEditing" });
+  keymap.bind("mod+shift+z", () => history(true), { when: "notEditing" });
+  keymap.bind("f2", () => { if (finding() || editing()) return; beginEdit(); });
+  keymap.bind("mod+f", openFind);
+  effect(() => {
+    if (!finding()) return;
+    if (editing()) {
+      keymap.bind("shift+enter", () => editDraft.set(`${editDraft()}\n`), { when: "always" });
+      return;
+    }
+    keymap.bind("enter", () => stepMatch(1), { when: "always" });
+    keymap.bind("shift+enter", () => stepMatch(-1), { when: "always" });
+    keymap.bind("escape", closeFind, { when: "always" });
+  });
+  function scopeLabel() {
+    if (!scoped()) return "All";
+    const name = props.document.columns.find(item => item.id === scopeId())?.name || "Column";
+    return name.length > 14 ? `${name.slice(0, 13)}…` : name;
+  }
+  function gridMatch() {
+    const match = activeMatch();
+    if (!match || !results().count) return null;
+    const column = props.document.columns.findIndex(item => item.id === match.columnId);
+    if (column < 0) return null;
+    return { row: match.rowIndex, column, start: match.start, end: match.end };
+  }
   const format = () => (props.document.metadata.delimiter === "\t" ? "TSV" : "CSV") + " · UTF-8";
-  return <View class="flex-1 min-h-0 min-w-0 bg-background">
-    <Toolbar accessibilityLabel="Document toolbar" class="min-h-14 shrink-0 flex-row items-center gap-3 border-b border-border/70 px-3 py-2 md:px-4">
-      <Button label="Close document" quiet compact={platform.desktop} icon="caret-left" onPress={() => props.onClose()} testID="close-document" />
-      <View class="flex-1 min-w-0 flex-row items-center gap-2">
-        <Text class="line-clamp-1 shrink text-[15px] font-semibold text-foreground">{props.document.name}</Text>
-        <Badge label={format()} />
+  const menuPopup = "min-w-44 overflow-hidden rounded-xl border border-border/70 bg-background p-1 shadow-lg";
+  return <View class="relative flex-1 min-h-0 min-w-0 bg-background">
+    <Toolbar accessibilityLabel="Document toolbar" class="min-h-14 shrink-0 flex-row items-center gap-2 border-b border-border/70 px-3 py-2 md:gap-3 md:px-4">
+      <Button label="Close document" quiet compact={platform.desktop} icon="caret-left" onPress={() => confirmDiscard(() => props.onClose())} testID="close-document" />
+      <View class={(wide() ? "flex-row items-center gap-2 " : "justify-center gap-0.5 ") + "min-w-0 flex-1"}>
+        <Text class="line-clamp-1 text-[15px] font-semibold text-foreground">{props.document.name}</Text>
+        <If when={wide()}><Badge label={format()} /></If>
+        <If when={!wide()}><Text class="line-clamp-1 text-[11px] font-medium text-muted-foreground">{format()}</Text></If>
       </View>
-      <If when={wide()}><Button label="Import…" compact onPress={() => props.onImport()} /></If>
+      <Button label={finding() ? "Close find" : "Find"} quiet compact={wide()} icon={finding() ? "x" : "magnifying-glass"} onPress={toggleFind}
+        tooltip={finding() ? undefined : `Find ${keymap.label("mod+f")}`} />
+      <Button label="Undo" quiet compact={wide()} icon="arrow-counter-clockwise" disabled={!edits().canUndo} onPress={() => history(false)} tooltip={`Undo ${keymap.label("mod+z")}`} />
+      <Button label="Redo" quiet compact={wide()} icon="arrow-clockwise" disabled={!edits().canRedo} onPress={() => history(true)} tooltip={`Redo ${keymap.label("mod+shift+z")}`} />
+      <Menu popupClass={menuPopup} backdropClass="bg-foreground/20" trigger={<Button label="More" quiet compact={wide()} icon="dots-three" onPress={() => {}} />}>
+        <MenuRow label="Import…" onSelect={() => confirmDiscard(() => props.onImport())} />
+      </Menu>
     </Toolbar>
+    <If when={finding()}>
+      <View class="shrink-0 gap-2 border-b border-border/70 px-3 py-2">
+        {/* Narrow screens keep the query on its own row so the field stays usable. */}
+        <View class={wide() ? "flex-row items-center gap-2" : "gap-2"}>
+          <View class={"flex-row items-center gap-2" + (wide() ? " min-w-0 flex-1" : "")}>
+            <View class="min-w-0 flex-1"><Input label="Find" placeholder="Find" testID="find-input" autoFocus value={term()} selectedRange={querySelection()} ref={node => { findInput = node; if (selectQuery) focusQuery(); }}
+              onChange={value => { querySelection.set(undefined); term.set(value); if (!value) { clearTimeout(searchTimer); searchTimer = undefined; pending.set(false); attempt(() => runSearch(false)); return; } queueSearch(); }} /></View>
+            <Button label="Previous" icon="caret-left" quiet compact={wide()} disabled={pending() || !results().count} onPress={() => stepMatch(-1)} />
+            <Button label="Next" icon="caret-right" quiet compact={wide()} disabled={pending() || !results().count} onPress={() => stepMatch(1)} />
+          </View>
+          <View class="flex-row flex-wrap items-center gap-2">
+            <Text testID="search-count" class={(wide() ? "shrink-0" : "min-w-0 flex-1") + " line-clamp-1 text-xs text-muted-foreground"}>{searchStatus()}</Text>
+            <If when={activeSnippet()}><Text testID="active-match" class="max-w-36 line-clamp-1 text-xs font-medium text-foreground underline" style={{ textDecorationLine: "underline" }}>{activeSnippet()}</Text></If>
+            <Button label="Aa" accessibilityLabel="Case sensitive" tight quiet compact={wide()} selected={sensitive()} tooltip="Case sensitive" onPress={() => toggleOption("case")} />
+            <Button label=".*" accessibilityLabel="Regex" tight quiet compact={wide()} selected={regex()} tooltip="Regex" onPress={() => toggleOption("regex")} />
+            <Button label={scopeLabel()} accessibilityLabel={scoped() ? "Selected column" : "All columns"} tight quiet compact={wide()} selected={scoped()} disabled={!column() && !scoped()} tooltip={scoped() ? "Selected column" : "All columns"} onPress={() => toggleOption("scope")} />
+            <Button label={replacing() ? "Hide replace" : "Replace…"} quiet compact={wide()} onPress={() => replacing.set(!replacing())} />
+          </View>
+        </View>
+        <If when={replacing()}>
+          <View class={wide() ? "flex-row items-center gap-2" : "gap-2"}>
+            <View class="min-w-0 flex-1"><Input label="Replace with" placeholder="Replace with" testID="replace-input" value={replacement()} onChange={value => replacement.set(value)} /></View>
+            <View class="flex-row items-center gap-2">
+              <Button label="Replace" quiet compact={wide()} disabled={!results().count || !!operationError()} onPress={() => replace(false)} />
+              <Button label="Replace all" compact={wide()} disabled={!results().count || !!operationError()} onPress={() => replace(true)} />
+            </View>
+          </View>
+        </If>
+        <If when={regex()}><Text class="text-xs text-muted-foreground">Replacement is literal</Text></If>
+        <If when={operationError()}><Text role="alert" class="text-xs text-destructive">{operationError()}</Text></If>
+        <If when={notice()}><Text class="text-xs text-muted-foreground">{notice()}</Text></If>
+      </View>
+    </If>
     <View class="flex-1 min-h-0 min-w-0 flex-row">
       <View class="flex-1 min-w-0 min-h-0">
-        <DataGrid session={props.document.session} metadata={props.document.metadata} columns={props.document.columns} onSelect={select} />
+        <DataGrid session={props.document.session} metadata={metadata()} columns={props.document.columns} onSelect={select}
+          version={version()} selected={selection()} sort={sorting()} onSort={sort} onEdit={editAt} onCellMenu={openCellMenu} activeMatch={gridMatch()} onReady={focus => { focusGrid = focus; }} />
         <View class="shrink-0 min-h-9 flex-row items-center justify-between gap-3 border-t border-border/70 px-4 py-1.5">
-          <View class="flex-row items-center gap-4">
+          <View class="flex-1 min-w-0 flex-row flex-wrap items-center gap-x-4 gap-y-1">
             <Text class="text-xs text-muted-foreground">{count(props.document.metadata.rowCount, "row", "rows")} · {count(props.document.metadata.columnCount, "column", "columns")}</Text>
             <If when={selection()}><Text class="text-xs text-muted-foreground">{`Row ${(selection()?.rowIndex ?? 0) + 1} · Column ${(selection()?.columnIndex ?? 0) + 1}`}</Text></If>
           </View>
-          <Text class="text-xs text-muted-foreground">Read only</Text>
+          <Text testID="edit-status" class="text-xs text-muted-foreground">{edits().modifiedCells ? `${edits().modifiedCells} modified · Unsaved` : "Unmodified"}</Text>
         </View>
         <If when={!wide()}>
           <View class="shrink-0 flex-row items-center gap-3 border-t border-border/70 bg-muted/30 px-4 py-3">
@@ -124,7 +461,7 @@ function DocumentView(props: { document: OpenDocument; onClose: () => void; onIm
               <Icon name="info" class="h-4 w-4" />
               <Text class="text-sm font-medium text-foreground">Column info</Text>
             </BaseButton>
-            <Button label="Import…" onPress={() => props.onImport()} />
+            <Button label="Import…" onPress={() => confirmDiscard(() => props.onImport())} />
           </View>
         </If>
       </View>
@@ -132,7 +469,7 @@ function DocumentView(props: { document: OpenDocument; onClose: () => void; onIm
         <View class="w-72 shrink-0 min-h-0 bg-muted/40 p-3">
           <View testID="inspector-panel" class="flex-1 min-h-0 overflow-hidden rounded-2xl border border-border/60 bg-background shadow-sm">
             <Scroll testID="inspector-scroll" class="flex-1 min-h-0">
-              <Inspector column={column()} profile={profile()} metadata={props.document.metadata} selection={selection()} progress={progress()}
+              <Inspector column={column()} profile={profile()} metadata={metadata()} selection={selection()} progress={progress()}
                 copyLabel={copyLabel()} onShowValue={showValue} onCopyValue={() => void copyValue()} />
             </Scroll>
           </View>
@@ -141,9 +478,17 @@ function DocumentView(props: { document: OpenDocument; onClose: () => void; onIm
     </View>
     <If when={info() && windowSize().width < 900}>
       <Dialog title="Column information" onClose={closeInfo}>
-        <Scroll style={{ maxHeight: windowSize().height * 0.6 }} class="min-h-0"><Inspector column={column()} profile={profile()} metadata={props.document.metadata} selection={selection()} progress={progress()}
+        <Scroll style={{ maxHeight: windowSize().height * 0.6 }} class="min-h-0"><Inspector column={column()} profile={profile()} metadata={metadata()} selection={selection()} progress={progress()}
           copyLabel={copyLabel()} onShowValue={showValue} onCopyValue={() => void copyValue()} /></Scroll>
         <Button label="Done" compact={platform.desktop} onPress={closeInfo} />
+      </Dialog>
+    </If>
+    <If when={editing()}>
+      <Dialog title={`Edit ${column()?.name || "cell"}`} onClose={cancelEdit} footer={<View class="flex-row justify-end gap-2">
+        <Button label="Cancel" quiet onPress={cancelEdit} /><Button label="Save cell" onPress={() => commitEdit()} />
+      </View>}>
+        <EditInput value={editDraft()} onChange={value => editDraft.set(value)} onCommit={commitEdit} onCancel={cancelEdit} onBind={blur => { blurEditor = blur; }} />
+        <If when={operationError()}><Text class="text-xs text-destructive">{operationError()}</Text></If>
       </Dialog>
     </If>
     <If when={full() != null}>
@@ -151,6 +496,13 @@ function DocumentView(props: { document: OpenDocument; onClose: () => void; onIm
         title={`Row ${(selection()?.rowIndex ?? 0) + 1} · ${column()?.name || "(unnamed)"}`}
         onCopy={() => void copyValue()} onClose={() => full.set(null)} />
     </If>
+    <Menu open={menuPoint() != null} onOpenChange={e => { if (!e.open) menuPoint.set(null); }}
+      popupClass={menuPopup} backdropClass="bg-foreground/20"
+      trigger={<View accessibilityElementsHidden style={{ position: "absolute", left: menuPoint()?.x ?? 0, top: menuPoint()?.y ?? 0, width: 1, height: 1 }} />}>
+      <MenuRow label="Edit cell" disabled={!selection()} onSelect={beginEdit} />
+      <MenuSeparator class="my-1 h-px bg-border" />
+      <MenuRow label="Clear cell" disabled={!selection()} onSelect={clearCell} />
+    </Menu>
   </View>;
 }
 
