@@ -180,6 +180,22 @@ fn undo_and_redo_of_direct_baseline_restoration_track_original() {
 }
 
 #[test]
+fn search_index_and_snippet_stay_in_rust() {
+    let mut s = session("a\nBrisbane Brisbane");
+    assert_eq!(find(&mut s, "Brisbane", None, true, false), 2);
+    assert_eq!(s.search_index(1, 1, 9, 0), Some(1));
+    assert_eq!(s.search_index(1, 1, 0, 1), Some(0));
+    assert_eq!(s.search_index(1, 1, 4, 99), None);
+    assert_eq!(s.search_snippet(0, 512).as_deref(), Some(""));
+    let mut s = session(&format!("a\n{}{}", "x".repeat(520), "N".repeat(800)));
+    assert_eq!(find(&mut s, &"N".repeat(800), None, true, false), 1);
+    let snippet = s.search_snippet(0, 512).unwrap();
+    assert_eq!(snippet.len(), 512);
+    assert!(snippet.chars().all(|c| c == 'N'));
+    assert!(s.search_snippet(3, 512).is_none());
+}
+
+#[test]
 fn search_limits_clear_old_results_and_reject_partial_replace() {
     let mut s = session(&format!("a\n{}", "x".repeat(100_001)));
     assert_eq!(find(&mut s, "xx", None, true, false), 50_000);

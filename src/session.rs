@@ -344,6 +344,17 @@ impl DocumentSession {
     pub fn search_match(&self, index: u32) -> Option<SearchMatch> {
         self.operations.match_at(index)
     }
+    /// Index of the retained match for this row, column and start byte.
+    /// `hint` is checked first. None when that occurrence is gone.
+    pub fn search_index(&self, row_id: u32, column_id: u32, start: u32, hint: u32) -> Option<u32> {
+        self.operations.find_match(row_id, column_id, start, hint)
+    }
+    /// Matched text for the find bar. Empty when the range is inside the grid
+    /// preview. Otherwise only that slice, at most 512 UTF-8 bytes.
+    pub fn search_snippet(&self, index: u32, preview_bytes: u32) -> Option<String> {
+        self.operations
+            .snippet(&self.document, index, preview_bytes as usize)
+    }
     /// Locate a stable row in the current view.
     pub fn row_position(&self, row_id: u32) -> Result<u32, EngineError> {
         self.document.cell(row_id, 1)?;

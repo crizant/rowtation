@@ -227,6 +227,35 @@ impl Operations {
     pub fn match_at(&self, index: u32) -> Option<SearchMatch> {
         self.matches.get(index as usize).cloned()
     }
+    /// The retained index of this occurrence. `hint` is one comparison; the
+    /// rest of the list is scanned in Rust, not across the JS bridge.
+    pub fn find_match(&self, row_id: u32, column_id: u32, start: u32, hint: u32) -> Option<u32> {
+        let same =
+            |m: &SearchMatch| m.row_id == row_id && m.column_id == column_id && m.start == start;
+        if self.matches.get(hint as usize).is_some_and(same) {
+            return Some(hint);
+        }
+        self.matches.iter().position(same).map(|i| i as u32)
+    }
+    /// The matched slice, or empty when it sits inside the `preview_bytes` prefix.
+    /// At most 512 bytes, on a character boundary. The rest of the cell stays in Rust.
+    pub fn snippet(&self, doc: &Document, index: u32, preview_bytes: usize) -> Option<String> {
+        let m = self.matches.get(index as usize)?;
+        let value = text(doc.cell(m.row_id, m.column_id).ok()?)?;
+        let start = m.start as usize;
+        let end = m.end as usize;
+        if end > value.len()
+            || start > end
+            || !value.is_char_boundary(start)
+            || !value.is_char_boundary(end)
+        {
+            return None;
+        }
+        if end <= crate::session::prefix(value, preview_bytes).len() {
+            return Some(String::new());
+        }
+        Some(crate::session::prefix(&value[start..end], 512).to_owned())
+    }
     pub fn edit(
         &mut self,
         doc: &mut Document,

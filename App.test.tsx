@@ -472,3 +472,31 @@ test("find reaches a match past the cell preview", async () => {
   await app.waitFor("Row 2 · Column 2");
   expect(app.texts()).toContain("NEEDLE");
 });
+
+test("a pending search does not step the previous matches", async () => {
+  const app = await open("./App.tsx", { width: 390, height: 844, clock: {}, clipboard: "id,city\nb,Brisbane\na,Sydney" });
+  await app.press("Paste from clipboard"); await app.press("Review import"); await app.press("Import document");
+  await app.waitFor("2 rows · 2 columns");
+  await app.press("Find");
+  expect(app.shows("id:find-input")).toBe(true);
+  expect(app.texts()).toContain("Aa");
+  expect(app.texts()).toContain("All");
+  expect(app.texts()).not.toContain("Options");
+  await app.paste("find-input", { text: "b" });
+  const clock = app.clock;
+  if (!clock) throw new Error("expected a manual clock");
+  await clock.runFor(200);
+  await app.waitFor("1 of 3 matches");
+  await app.press("Next");
+  await app.waitFor("2 of 3 matches");
+  await app.paste("find-input", { text: "x" });
+  expect(app.texts()).toContain("Searching…");
+  expect(app.enabled("Next")).toBe(false);
+  expect(app.enabled("Previous")).toBe(false);
+  await app.keyboard.press("enter");
+  expect(app.texts()).toContain("Searching…");
+  expect(app.texts()).not.toContain("3 of 3 matches");
+  expect(app.texts()).toContain("Row 1 · Column 2");
+  await clock.runFor(200);
+  await app.waitFor("No matches");
+});

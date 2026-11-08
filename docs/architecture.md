@@ -16,7 +16,7 @@ See the [data operations contract](operations.md) for ordering, matching,
 revisions, dirty state, mutation methods and resource limits.
 `src/operations.rs` owns stable ordering, retained matches, sparse baseline values
 and bounded before/after transactions. `DocumentSession` exposes `sort`, `search`,
-`searchMatch`, `rowPosition`, `editStatus`, `editCell`, `replaceMatches` and `history`
+`searchMatch`, `searchIndex`, `searchSnippet`, `rowPosition`, `editStatus`, `editCell`, `replaceMatches` and `history`
 through the registered API. Mutations invalidate cached and in-progress profiles.
 
 `#[native_module("rowtation/native")]` registers `DocumentSession` using
@@ -114,7 +114,7 @@ const output = session.serialize({ delimiter: ",", headers: true });
 | `readCell(rowId: number, columnId: number): CellSnapshot` | Full value using document-scoped IDs obtained from `rows()`/`columns()`. `{ kind, text, boolean, number, byteLength, truncated, matched }` (never truncated). Only the payload for kind is populated, others null. `kind` is `missing`, `null`, `text`, `boolean` or `number`. |
 | `serialize(options: ExportOptions): Uint8Array` | Optional delimiter/headers default to source settings. Whole document only; no filtered export or download. |
 | `sort(columnId, descending): void` | Stable view order; null column resets. Does not change data revision. |
-| `search(options): SearchResult` / `searchMatch(index)` | Retain scoped occurrence IDs/ranges in Rust; return count and one navigable match. |
+| `search(options): SearchResult` / `searchMatch(index)` / `searchIndex(rowId, columnId, start, hint)` / `searchSnippet(index, previewBytes)` | Retain scoped occurrence IDs/ranges in Rust. Return the count and one navigable match. `searchIndex` finds a retained occurrence in one call. `searchSnippet` returns that slice, or empty when it sits inside the preview, at most 512 bytes. |
 | `editCell(rowId, columnId, text, revision)` | Literal text commit using stable IDs and expected revision; same-value commits are no-ops. |
 | `replaceMatches(index, text, revision)` | Replace one occurrence, or all retained matches when index is null; one transaction and exact counts. |
 | `history(redo): MutationResult` / `editStatus()` | Undo/redo one bounded transaction; report dirty cell count and history availability. |

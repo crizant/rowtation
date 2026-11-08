@@ -44,8 +44,8 @@ avoids catastrophic backtracking. Narrow the term/scope when a limit is reached.
 Raising those bounds, returning a partial list, or moving the scan off the calling
 thread is engine follow-up [issue #9](https://github.com/crizant/rowtation/issues/9),
 not an import cap.
-The retained match list stays in Rust; navigation transfers one match with stable
-row/column IDs, UTF-8 byte range and revision. After a new query the UI reveals
+The retained match list stays in Rust. Finding the same occurrence again is one
+lookup, and navigation transfers that match plus a bounded snippet, not the whole cell. After a new query the UI reveals
 the first match. After replace, replace all, undo, redo, or a scope/case/regex
 change it keeps the same occurrence when that byte range still matches, and
 otherwise keeps the same index clamped to the new list. The counter and the grid

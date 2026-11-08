@@ -14,7 +14,7 @@ import { Input } from "./components/Input";
 import { Inspector } from "./components/Inspector";
 import { Checkbox } from "./components/Checkbox";
 import { diagnosticsOn, measurements, record, timed, timeToNextFrame, wasmMemory } from "./components/diagnostics";
-import { previewHolds, utf8Span } from "./components/gridRowCache";
+import { PREVIEW_BYTES } from "./components/gridRowCache";
 import { ValueDialog } from "./components/ValueDialog";
 
 interface OpenDocument {
@@ -165,21 +165,13 @@ function DocumentView(props: { document: OpenDocument; onClose: () => void; onIm
   function queryKey() {
     return `${term()}\0${sensitive()}\0${regex()}\0${scoped() ? scopeId() ?? "" : ""}`;
   }
-  function sameMatch(match: SearchMatch | null, identity: { rowId: number; columnId: number; start: number }) {
-    return !!match && match.rowId === identity.rowId && match.columnId === identity.columnId && match.start === identity.start;
-  }
   function resolveIndex(count: number) {
-    if (!held) return Math.min(heldIndex, count - 1);
-    const hinted = Math.min(heldIndex, count - 1);
-    if (sameMatch(props.document.session.searchMatch(hinted), held)) return hinted;
-    for (let index = 0; index < count; index++) {
-      if (index !== hinted && sameMatch(props.document.session.searchMatch(index), held)) return index;
-    }
-    return hinted;
+    const fallback = Math.min(heldIndex, Math.max(count - 1, 0));
+    if (!held || count < 1) return fallback;
+    return props.document.session.searchIndex(held.rowId, held.columnId, held.start, heldIndex) ?? fallback;
   }
-  function showSnippet(match: SearchMatch, text: string) {
-    const hit = utf8Span(text, match.start, match.end)?.hit ?? "";
-    activeSnippet.set(hit && !previewHolds(text, match.start, match.end) ? hit : "");
+  function showSnippet(index: number) {
+    activeSnippet.set(props.document.session.searchSnippet(index, PREVIEW_BYTES) ?? "");
   }
   function remember(index: number) {
     const match = props.document.session.searchMatch(index);
@@ -212,8 +204,8 @@ function DocumentView(props: { document: OpenDocument; onClose: () => void; onIm
         if (mode === "restart" || !activeTerm) { held = null; heldIndex = 0; }
       } else if (reveal) revealMatch(mode === "restart" ? 0 : resolveIndex(result.count));
       else {
-        const match = remember(mode === "restart" ? 0 : resolveIndex(result.count));
-        if (match) showSnippet(match, props.document.session.readCell(match.rowId, match.columnId).text ?? "");
+        const index = mode === "restart" ? 0 : resolveIndex(result.count);
+        if (remember(index)) showSnippet(index);
       }
     } catch (cause) {
       results.set({ count: 0, current: null });
@@ -233,16 +225,19 @@ function DocumentView(props: { document: OpenDocument; onClose: () => void; onIm
     searchTimer = setTimeout(() => { searchTimer = undefined; attempt(() => runSearch(true, "restart")); }, 180);
   }
   function revealMatch(index: number) {
+    if (pending()) return;
     const length = results().count;
     if (!length) return;
     const next = (index % length + length) % length;
     const match = remember(next);
     if (!match) return;
-    const value = props.document.session.readCell(match.rowId, match.columnId);
-    showSnippet(match, value.text ?? "");
+    showSnippet(next);
     const columnIndex = props.document.columns.findIndex(c => c.id === match.columnId);
-    select({ documentId: metadata().id, rowId: match.rowId, columnId: match.columnId, rowIndex: match.rowIndex, columnIndex,
-      preview: value }, match.columnId);
+    if (columnIndex < 0) return;
+    const row = props.document.session.rows({ offset: match.rowIndex, limit: 1, columnOffset: columnIndex, columnLimit: 1, previewBytes: PREVIEW_BYTES }).rows[0];
+    const preview = row?.cells[0];
+    if (!preview) return;
+    select({ documentId: metadata().id, rowId: match.rowId, columnId: match.columnId, rowIndex: match.rowIndex, columnIndex, preview }, match.columnId);
   }
   function searchStatus() {
     if (!term()) return "";
@@ -313,8 +308,8 @@ function DocumentView(props: { document: OpenDocument; onClose: () => void; onIm
   }
   function toggleFind() { if (finding()) closeFind(); else openFind(); }
   function stepMatch(delta: number) {
-    if (!finding() || editing()) return;
-    if (pending() || queryKey() !== appliedKey) {
+    if (!finding() || editing() || pending()) return;
+    if (queryKey() !== appliedKey) {
       attempt(() => runSearch(true, "restart"));
       if (delta < 0 && results().count > 1) revealMatch(results().count - 1);
       return;
@@ -422,8 +417,8 @@ function DocumentView(props: { document: OpenDocument; onClose: () => void; onIm
           <View class={"flex-row items-center gap-2" + (wide() ? " min-w-0 flex-1" : "")}>
             <View class="min-w-0 flex-1"><Input label="Find" placeholder="Find" testID="find-input" autoFocus value={term()} selectedRange={querySelection()} ref={node => { findInput = node; if (selectQuery) focusQuery(); }}
               onChange={value => { querySelection.set(undefined); term.set(value); if (!value) { clearTimeout(searchTimer); searchTimer = undefined; pending.set(false); attempt(() => runSearch(false)); return; } queueSearch(); }} /></View>
-            <Button label="Previous" icon="caret-left" quiet compact={wide()} disabled={!results().count} onPress={() => revealMatch(matchIndex() - 1)} />
-            <Button label="Next" icon="caret-right" quiet compact={wide()} disabled={!results().count} onPress={() => revealMatch(matchIndex() + 1)} />
+            <Button label="Previous" icon="caret-left" quiet compact={wide()} disabled={pending() || !results().count} onPress={() => stepMatch(-1)} />
+            <Button label="Next" icon="caret-right" quiet compact={wide()} disabled={pending() || !results().count} onPress={() => stepMatch(1)} />
           </View>
           <View class="flex-row flex-wrap items-center gap-2">
             <Text testID="search-count" class={(wide() ? "shrink-0" : "min-w-0 flex-1") + " line-clamp-1 text-xs text-muted-foreground"}>{searchStatus()}</Text>
