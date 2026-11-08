@@ -284,3 +284,73 @@ hit layer owns physical input. Headless dispatch reaches the retained custom
 cell handler and passes. This change preserves that handler and does not claim
 to fix NSH's hit layer. The scaled-scroll tiny-delta holds described above also
 remain.
+
+## PR #14 highlighted scrolling follow-up
+
+Compared PR #14's initial production package (`69db597`) with the lifecycle,
+cache and renderer fixes. The same two-million-row file, checksum, NSH 0.4.0,
+macOS ARM64, Brave/Chrome 156.0.8078.80, desktop idiom, 1280 × 800, DPR 2 and
+wheel protocol described above were used. Three fresh-browser runs per case
+used no method wrappers or CPU/trace recording, and no builds/tests ran during
+the retained timing runs. Import, query execution and Inspector profiling were
+outside the grid-only measurement. Figures below are medians across those runs.
+
+| State | Before p95, ms | After p95, ms | Before largest frame, ms | After largest frame, ms | Before frames >25 ms | After frames >25 ms |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Find closed | 19.4 | 19.6 | 37.2 | 35.0 | 2 | 3 |
+| Find open, scoped absent query | 20.0 | 20.1 | 34.0 | 35.5 | 2 | 2 |
+| Find open, 20k scoped ID matches | 25.7 | 23.3 | 53.2 | 46.1 | 17 | 13 |
+
+The absent and matched queries both have a 587 px viewport; the closed Find
+control has 672 px. Compare matched search with the absent-query control to
+avoid attributing the find bar's height to highlighting. The highlighted-query
+p95 improves about 9%, the median largest frame about 13%, and the number of
+frames above 25 ms about 24%. Find-closed and no-match differences are small
+run-to-run variation. Highlighted rendering remains more expensive than native
+text; this is an improvement, not a claim that its overhead is eliminated.
+
+NSH 0.4's `renderCell` switch applies to the entire table. Its resolved
+`data_table/view.rs` creates custom render slots for every visible cell when
+that prop is present; an empty custom result does not fall back to native text.
+The app previously gave every such cell snapshot, match and active-occurrence
+memos plus a styled View. Now plain desktop cells keep one match boolean and
+one Text, while only matching cells allocate the styled wrapper and occurrence
+memo. Touch retains its long-press wrapper. Reactive branching is retained so
+cells mounted before their row window arrives can acquire highlights correctly.
+
+At the initial highlighted viewport the observed mounted-node count fell from
+1,052–1,056 to 921–925, with 131 unneeded styled cell wrappers removed and the
+one visible match retained. Without matches the native path stayed at 617 nodes
+with Find closed. Separate instrumented runs made the same five grid-phase
+row-window calls, totaling 10.8 ms before and 9.9 ms after. Component-prop
+application was 2.2 ms before and 3.0 ms after in those individual runs. These inclusive
+bridge timings do not explain the frame-time improvement, and should not be
+added to nested timings or treated as statistical comparisons.
+
+Search no longer advances the grid's data version during cancellation,
+debounce or restart. Rust's `searchHighlights` returns flags only for the bounded
+cached window; unchanged flags leave it untouched, while changed flags preserve
+the table-data array. A memo prevents a flag-only update from reapplying the
+DataTable data prop. Data/order changes still reload once. Bridge-count tests
+check zero text-window reads for no-hit queries, cancellation and clearing
+highlights; revealing or restarting onto one match reads just its one-cell
+preview. The redundant initial version-effect read is also gone.
+
+Reproduce the existing production probe above, adding `--search` for 20k
+matches, or `--search-absent` for the equal-height no-match control. Omit both
+for Find closed. Alternate before/after packages for three fresh-browser runs
+per state. The probe now saves mounted-node and styled-cell counts in its JSON
+and explicitly targets the grid's ID header; the find bar's scoped `id` button
+must not receive the later Inspector click. Earlier recordings' grid-only
+phases precede that later click and remain valid. Use separate `--instrument`
+runs for call attribution and optional `--screenshot` for visual inspection.
+The existing NSH compressed-scroll tiny-delta holds remain unchanged.
+
+Validation: `cargo fmt --check`, `nsh check`, `nsh build`, and web packaging
+(13.5 MB) passed. `nsh test` passed 125 tests with 8 existing opt-in
+benchmark/stress tests skipped. Browser runs passed all 25 app workflows, both
+grid workflows and all three new lifecycle/bridge-count regressions. The focused
+lifecycle tests were re-run headless and in the browser after tightening the
+initial-read and no-hit flag-call assertions. Desktop/mobile active Unicode
+occurrences, cleared highlights, and the scrolled production grid were visually
+inspected. Data, recordings and PNGs remain local and untracked.

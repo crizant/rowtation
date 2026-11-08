@@ -82,3 +82,32 @@ The focused Rust suite was re-run after avoiding an unused regex iterator/cache
 on suspended cells. Mobile pending/cancelled states and desktop dark matching
 were visually inspected; mobile status keeps enough width for the full message.
 Generated screenshots, build output and synthetic inputs are not committed.
+
+
+## PR #14 lifecycle and grid follow-up
+
+Document views capture their document handle when mounted. Close first marks the
+view inactive, invalidates callback generations and clears its timers, then
+disposes that captured session. Unmount uses the same idempotent cleanup. Delayed
+discard confirmations and search/profile/editor continuations cannot act on a
+closed document. Disposal releases the Rust dataset, profiles and search state;
+WASM linear memory remains a high-water allocation and is not expected to shrink.
+
+Data/order revisions alone invalidate the text window. Search cancellation and
+completion notify a separate highlight revision only when retained hits are
+removed or added. `searchHighlights` reads flags for the bounded cached window
+without retransferring text. Unchanged flags preserve the cache itself; changed
+flags preserve formatted table data and unchanged row/cell identities. The grid
+also skips the redundant initial version-effect load.
+
+`SearchLifecycle.test.tsx` instruments real registered bridge calls. It checks
+close/reopen disposal counts and unusable disposed handles, no calls after close,
+no row reloads for cancellation/no-hit queries, one preview read for revealing a
+match, and no text reads when clearing highlights. A 300,000-row synthetic fixture
+arms an unfinished Rust search while the UI debounce remains pending, then closes
+and advances the clock: both retained Rust work and the queued task must be gone.
+The explicit arm avoids a manual clock draining all zero-delay continuations
+before the test can close. Cache tests verify unchanged text/row/cell identity;
+Rust tests cover flag windows, sorting, cancellation and validation. See the
+[scroll comparison](scroll-performance.md#pr-14-highlighted-scrolling-follow-up)
+for the production renderer measurements.

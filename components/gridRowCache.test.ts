@@ -1,6 +1,6 @@
 import { expect, test } from "nsh/test";
 import type { DocumentMetadata, RowWindow, RowsSnapshot } from "rowtation/native";
-import { loadGridRows, previewHolds, PREVIEW_BYTES, utf8Prefix, utf8Span } from "./gridRowCache";
+import { loadGridRows, previewHolds, PREVIEW_BYTES, updateGridHighlights, utf8Prefix, utf8Span } from "./gridRowCache";
 
 function fixture(rowCount = 2000) {
   const metadata: DocumentMetadata = { id: "synthetic", revision: 0, rowCount, columnCount: 40, dirty: false, format: "csv", delimiter: ",", headers: true };
@@ -145,4 +145,23 @@ test("grid cache handles small and empty documents without repeated fetches", ()
   expect(noRows.data.length).toBe(0);
   expect(empty.load(noRows, 0, 0)).toBe(noRows);
   expect(empty.calls.length).toBe(0);
+});
+
+
+test("highlight updates preserve grid text and unchanged rows without fetching", () => {
+  const { load, calls } = fixture();
+  const initial = load(null, 0, 24);
+  const empty = initial.snapshot.rows.map(row => row.cells.map(() => false));
+  expect(updateGridHighlights(initial, empty)).toBe(initial);
+  const flags = empty.map(row => row.slice()); flags[1][2] = true;
+  const marked = updateGridHighlights(initial, flags);
+  expect(marked.data).toBe(initial.data);
+  expect(marked.snapshot.rows[0]).toBe(initial.snapshot.rows[0]);
+  expect(marked.snapshot.rows[1].cells[0]).toBe(initial.snapshot.rows[1].cells[0]);
+  expect(marked.snapshot.rows[1].cells[2].matched).toBe(true);
+  expect(updateGridHighlights(marked, flags)).toBe(marked);
+  const cleared = updateGridHighlights(marked, empty);
+  expect(cleared.data).toBe(initial.data);
+  expect(cleared.snapshot.rows[1].cells[2].matched).toBe(false);
+  expect(calls.length).toBe(1);
 });

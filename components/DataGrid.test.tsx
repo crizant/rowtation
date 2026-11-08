@@ -13,6 +13,7 @@ test("grid pointer cells use native text until search highlights are needed", as
   await app.clear("find-input"); await app.paste("find-input", { text: "Brisbane" });
   await app.waitFor("1 of 2 matches");
   expect(app.count("id:search-highlight")).toBe(1);
+  expect(app.count("id:grid-custom-cell")).toBe(0);
   await app.waitUntil(() => {
     try { return app.spanStyle("id:active-match").underline; } catch { return false; }
   });

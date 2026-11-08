@@ -16,7 +16,7 @@ See the [data operations contract](operations.md) for ordering, matching,
 revisions, dirty state, mutation methods and resource limits.
 `src/operations.rs` owns stable ordering, retained matches, sparse baseline values
 and bounded before/after transactions. `DocumentSession` exposes `sort`, `search`,
-`startSearch`, `searchStep`, `cancelSearch`, `searchMatch`, `searchIndex`, `searchSnippet`, `rowPosition`, `editStatus`, `editCell`, `replaceMatches` and `history`
+`startSearch`, `searchStep`, `cancelSearch`, `searchHighlights`, `searchMatch`, `searchIndex`, `searchSnippet`, `rowPosition`, `editStatus`, `editCell`, `replaceMatches` and `history`
 through the registered API. Mutations invalidate cached and in-progress profiles.
 
 `#[native_module("rowtation/native")]` registers `DocumentSession` using
@@ -59,7 +59,8 @@ rows. Sorting orders row identities in a Rust view. Row lookup is O(1) by ID; ce
 
 Imported documents start clean at revision zero. Reads, sorting, search and export
 do not change either. Mutations update revision/dirty in Rust; a UI generation
-invalidates bounded grid windows after mutations and ordering/search changes.
+invalidates bounded grid windows after mutations and ordering changes. Search
+updates bounded highlight flags separately without invalidating cached text.
 
 ## Public Rust API
 
@@ -117,6 +118,7 @@ const output = session.serialize({ delimiter: ",", headers: true });
 | `sort(columnId, descending): void` | Stable view order; null column resets. Does not change data revision. |
 | `search(options): SearchResult` / `searchMatch(index)` / `searchIndex(rowId, columnId, start, hint)` / `searchSnippet(index, previewBytes)` | Retain scoped occurrence IDs/ranges in Rust. Return the count and one navigable match. `searchIndex` finds a retained occurrence in one call. `searchSnippet` returns that slice, or empty when it sits inside the preview, at most 512 bytes. |
 | `startSearch(options): void` / `searchStep(): SearchProgress` / `cancelSearch(): void` | Start/restart without scanning; step targets 8 ms and returns `{ scanned, total, result }`. `result` is null until the scan and highlight index finish. Cancel clears work and matches. Query compilation and individual regex calls are atomic and may exceed the target. The UI schedules each step in a separate event-loop task. |
+| `searchHighlights(window): boolean[][]` | Bounded row/column window of the retained highlight flags in current view order. Same window validation as `rows`; no cell text transfer. UI updates only changed flags, preserving cached text and table-data identity. |
 | `editCell(rowId, columnId, text, revision)` | Literal text commit using stable IDs and expected revision; same-value commits are no-ops. |
 | `replaceMatches(index, text, revision)` | Replace one occurrence, or all retained matches when index is null; one transaction and exact counts. |
 | `history(redo): MutationResult` / `editStatus()` | Undo/redo one bounded transaction; report dirty cell count and history availability. |
