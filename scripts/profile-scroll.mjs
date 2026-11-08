@@ -28,7 +28,7 @@ if (args.check) {
   console.log('Profile budget and exact results passed');
   process.exit(0);
 }
-if (!args.build || !args.csv || !args.out) throw new Error('Usage: node scripts/profile-scroll.mjs --build <production-directory> --csv <fixture.csv> --out <result.json> [--instrument] [--trace] [--cpu] [--dpr 2] [--browser <Chrome/Brave>]');
+if (!args.build || !args.csv || !args.out) throw new Error('Usage: node scripts/profile-scroll.mjs --build <production-directory> --csv <fixture.csv> --out <result.json> [--instrument] [--trace] [--cpu] [--search] [--dpr 2] [--browser <Chrome/Brave>]');
 const root = resolve(args.build), dataset = resolve(args.csv), output = resolve(args.out);
 const browser = args.browser ?? '/Applications/Brave Browser.app/Contents/MacOS/Brave Browser';
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -63,7 +63,7 @@ async function until(expression, timeout = 120000) {
   throw new Error('Timed out: ' + expression);
 }
 async function click(text) {
-  const p = await evaluate(`(()=>{const el=[...document.querySelectorAll('[role="button"], .nsh-run')].find(el=>el.textContent.trim()===${JSON.stringify(text)});if(!el)return null;const r=el.getBoundingClientRect();return{x:r.x+r.width/2,y:r.y+r.height/2}})()`);
+  const p = await evaluate(`(()=>{const el=[...document.querySelectorAll('[role="button"], .nsh-run')].find(el=>el.getAttribute('aria-label')===${JSON.stringify(text)}||el.textContent.trim()===${JSON.stringify(text)});if(!el)return null;const r=el.getBoundingClientRect();return{x:r.x+r.width/2,y:r.y+r.height/2}})()`);
   if (!p) throw new Error('Button missing: ' + text);
   await send('Input.dispatchMouseEvent', { type: 'mousePressed', ...p, button: 'left', clickCount: 1 });
   await send('Input.dispatchMouseEvent', { type: 'mouseReleased', ...p, button: 'left', clickCount: 1 });
@@ -92,6 +92,16 @@ try {
   await until(`!!document.querySelector('[data-testid="data-grid"]')`);
   console.log('Imported', args.label ?? '', await evaluate(`document.querySelector('[data-testid="data-grid"]').textContent.slice(0,80)`));
   await sleep(1500);
+  // Optional PR #8 highlight workload: 20,000 ID matches, below the search
+  // limits, with a match in every 100 rows throughout the scroll protocol.
+  if (args.search) {
+    await click('id'); await click('Find'); await click('All'); await click('.*');
+    await evaluate(`(()=>{const el=document.querySelector('[data-testid="find-input"]');(el.matches('input,textarea')?el:el.querySelector('input,textarea')).focus()})()`);
+    await send('Input.insertText', { text: '00$' });
+    await until(`document.body.textContent.includes('1 of 20000 matches')`);
+    await until(`!!document.querySelector('[data-testid="search-highlight"]')`);
+    await sleep(1500);
+  }
   const setup = function (instrument) {
     const player = globalThis.__scrollPlayer;
     const grid = document.querySelector('[data-testid="data-grid"]');
@@ -161,7 +171,7 @@ try {
   if (args.cpu) { const { profile } = await send('Profiler.stop'); await writeFile(output + '.cpuprofile', JSON.stringify(profile)); }
   if (args.trace) { const done = event('Tracing.tracingComplete'); await send('Tracing.end'); const { stream } = await done; let text = ''; for (;;) { const r = await send('IO.read', { handle: stream }); text += r.data; if (r.eof) break; } await send('IO.close', { handle: stream }); await writeFile(output + '.trace.json', text); }
   if (args.screenshot) { const shot = await send('Page.captureScreenshot', { format: 'png' }); await writeFile(args.screenshot, Buffer.from(shot.data, 'base64')); }
-  await writeFile(output, JSON.stringify({ label: args.label, browser: await send('Browser.getVersion'), instrumented: !!args.instrument, datasetBytes: (await stat(dataset)).size, summary, stats, metrics }, null, 2));
+  await writeFile(output, JSON.stringify({ label: args.label, browser: await send('Browser.getVersion'), instrumented: !!args.instrument, search: !!args.search, datasetBytes: (await stat(dataset)).size, summary, stats, metrics }, null, 2));
   console.log('Wrote', output);
   if (args['max-profile-ms']) checkProfile({ instrumented: !!args.instrument, stats }, Number(args['max-profile-ms']));
 } finally {

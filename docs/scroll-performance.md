@@ -1,5 +1,8 @@
 # Two-million-row scrolling investigation
 
+For the later PR #8 renderer regression and its fix, see
+[PR #8 grid scrolling regression](pr8-scroll-performance.md).
+
 Measured on 2026-11-08. PR #6 reduced bridge work, but the main inertia-end
 stutter is NSH 0.4.0 desktop scroll motion, not a long Rust row fetch. A separate
 Inspector bug caused a real 127–160 ms main-thread pause. This change fixes that

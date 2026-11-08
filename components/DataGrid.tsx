@@ -1,5 +1,5 @@
-import { effect, platform, signal, Text, View, windowSize } from "nsh";
-import { DataTable, type DataTableRange, type DataTableRef, type DataTableSort, type DataTableSelection } from "nsh/base";
+import { computed, effect, platform, signal, Text, View, windowSize } from "nsh";
+import { DataTable, type DataTableCell, type DataTableRange, type DataTableRef, type DataTableSort, type DataTableSelection } from "nsh/base";
 import type { CellSnapshot, ColumnMetadata, DocumentMetadata, DocumentSession, RowWindow } from "rowtation/native";
 import { measuring, record, timeToNextFrame } from "./diagnostics";
 import { loadGridRows, PREVIEW_BYTES, utf8Span } from "./gridRowCache";
@@ -83,39 +83,38 @@ export function DataGrid(props: {
   // Pointer desktops get a denser grid; touch layouts keep 44-point rows.
   const dense = () => platform.desktop && windowSize().width >= 900;
   const columnWidth = () => windowSize().width < 640 ? 148 : 176;
-  // The table recalls a cell only when its text changes. Match tint is a binding
-  // over the row cache, so copied values stay the plain field text.
+  // Keep a stable renderer identity: a row-window refill must not reset the
+  // table's renderCell prop. Ordinary pointer cells use NSH's native text path.
+  // Touch cells retain the lightweight wrapper for NSH 0.4's onLongPress event.
+  const highlights = computed(() => cache().snapshot.rows.some(row => row.cells.some(cell => cell.matched)));
+  const renderCell = (cell: DataTableCell) => <GridCell text={cell.text} row={cell.row} column={cell.column} />;
   function GridCell(cell: { text: string; row: number; column: number }) {
-    const snap = () => {
-      const current = cache();
-      return current.snapshot.rows[cell.row - current.snapshot.offset]?.cells[cell.column - current.snapshot.columnOffset];
-    };
-    const matched = () => !!snap()?.matched;
-    const occurrence = () => {
+    // Overlapping cache windows reuse snapshots. Only this memo subscribes to
+    // the whole cache; unchanged cells do not reapply text, spans or styles.
+    const snapshot = computed(() => {
+      const current = cache().snapshot;
+      return current.rows[cell.row - current.offset]?.cells[cell.column - current.columnOffset];
+    });
+    const matched = computed(() => !!snapshot()?.matched);
+    const occurrence = computed(() => {
       const mark = active();
-      const preview = snap()?.text ?? "";
       if (!mark || mark.row !== cell.row || mark.column !== cell.column) return null;
-      const split = utf8Span(preview, mark.start, mark.end);
-      return split?.hit ? split : null;
-    };
-    // Nested text is always present. Switching a cell between a plain string and a
-    // fragment drops the span, so the active occurrence stays a child of this text.
-    const parts = () => {
-      const split = occurrence();
-      if (!split) return { before: cell.text, hit: "", after: "" };
-      return { before: split.before, hit: split.hit, after: split.after + (snap()?.truncated ? "…" : "") };
-    };
-    return <View testID={matched() ? "search-highlight" : undefined}
+      const snap = snapshot();
+      const split = utf8Span(snap?.text ?? "", mark.start, mark.end);
+      return split?.hit ? { ...split, after: split.after + (snap?.truncated ? "…" : "") } : null;
+    });
+    return <View testID={matched() ? "search-highlight" : "grid-custom-cell"}
       onLongPress={() => props.onCellMenu(cell.row, cell.column, 16, 120)}
       style={{ height: dense() ? 30 : 40, width: columnWidth() - 24 }}
       class={"justify-center rounded" + (matched() ? " bg-primary/15" : "")}>
-      <Text class="text-[13px] text-foreground line-clamp-1">{parts().before}<Text
-        testID={parts().hit ? "active-match" : undefined}
-        class={parts().hit ? "rounded-sm bg-primary/50 text-foreground underline" : ""}
-        style={parts().hit ? { textDecorationLine: "underline" } : undefined}>{parts().hit}</Text>{parts().after}</Text>
+      <If when={occurrence()} else={<Text class="text-[13px] text-foreground line-clamp-1">{cell.text}</Text>}>
+        {split => <Text class="text-[13px] text-foreground line-clamp-1">{split().before}<Text
+          testID="active-match" class="rounded-sm bg-primary/50 text-foreground underline"
+          style={{ textDecorationLine: "underline" }}>{split().hit}</Text>{split().after}</Text>}
+      </If>
     </View>;
   }
-  return <DataTable renderCell={cell => <GridCell text={cell.text} row={cell.row} column={cell.column} />}
+  return <DataTable renderCell={highlights() || !platform.desktop ? renderCell : undefined}
     class="flex-1 min-h-0 min-w-0 bg-background" testID="data-grid" accessibilityLabel="Document data"
     ref={ref => { table = ref; table.select(selection()); }} sort={props.sort} onSortChange={e => props.onSort(e.sort)}
     onDoublePress={e => { if (e.target.row != null && e.target.column != null) props.onEdit(e.target.row, e.target.column); }}
