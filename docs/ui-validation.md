@@ -81,5 +81,7 @@ inspector's full-value dialog renders 32,768 characters at a time and copy alway
 takes the whole value. They are not full-text editors. File selection/drop requires a modern browser. Clipboard
 permission failures leave a manual paste field available.
 
-The scoped duplicate-scrollbar CSS depends on NSH 0.4's browser DOM classes;
-visually check horizontal scrolling when upgrading NSH. Web is the only deliverable.
+The scoped duplicate-scrollbar CSS depends on NSH 0.4's browser DOM classes,
+including the desktop bar's stacking. Visually check that horizontal scrolling
+still works and that the bar stays under Diagnostics when upgrading NSH. Web is
+the only deliverable.

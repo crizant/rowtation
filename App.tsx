@@ -219,8 +219,16 @@ function Home(props: { dragging: boolean; onPick: () => void; onPaste: () => voi
 export function App() {
   // NSH 0.4 draws a desktop bar for horizontal scroll views even when their
   // indicator is false. DataTable already supplies a bottom viewport bar.
-  // Scope this presentation workaround to that table's disabled inner indicator.
-  cleanup(BrowserStyles.install('[data-testid="data-grid"] .nsh-noindicator > .nsh-bar { display: none; }'));
+  // That bar is a DOM node with a huge z-index, and the document view is
+  // painted after Diagnostics, so the bar shows through the panel. Isolate
+  // the grid and the inspector scroller so the bar stays above their content
+  // only, and lift Diagnostics above the document. Hide only the disabled
+  // inner indicator beneath the grid.
+  cleanup(BrowserStyles.install(
+    '[data-testid="data-grid"], [data-testid="inspector-scroll"] { isolation: isolate; }' +
+    '[data-testid="diagnostics"] { z-index: 20; }' +
+    '[data-testid="data-grid"] .nsh-noindicator > .nsh-bar { display: none; }',
+  ));
 
   const active = signal<OpenDocument | null>(null);
   const mode = signal<"paste" | "confirm" | "review" | null>(null);
