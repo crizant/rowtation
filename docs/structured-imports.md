@@ -15,8 +15,9 @@ an actionable error. Nested objects and arrays can contain any JSON value.
 NDJSON accepts one object per nonblank physical line, using LF or CRLF. Empty and
 whitespace-only lines are skipped, including at the start/end. Errors identify
 the physical line and nonblank record. It parses each line independently, without
-creating an intermediate JSON array. JSON syntax errors include line/column where
-available; errors within nested decoded subvalues may have a local location.
+creating an intermediate JSON array. JSON syntax and nested duplicate-key errors report positions in the original
+document, including physical lines in CRLF input; substring decoder positions
+are translated before being reported.
 
 Leaves become columns: `user.name`, `user.address.city`, `items[0].sku`.
 Simple nonempty alphanumeric/underscore keys use dot notation; other keys use a
@@ -100,13 +101,33 @@ XML tree is transient and released after import. Deep XML is parsed by the XML
 library before the mapping-depth validation; extremely large input can still
 exhaust browser memory.
 
-Review measures actual structured records, flattened columns, stored fields and
-longest scalar using a temporary Rust document, then releases it. Committing
-reparses the retained source; no second dataset is retained in TypeScript. This
-means two synchronous parse passes, trading CPU for accurate existing advisory
-warnings without retaining both bytes and a parsed candidate between steps.
+Structured review detects format from at most 64 KiB and reads byte-size metadata;
+it does not validate or parse the document. The dialog explicitly says row/column
+counts are checked on Import. Files over 8 MiB still require confirmation before
+reading; large pasted input shows the byte-size warning before parsing. CSV/TSV
+retain their existing whole-input delimiter measurements and dense row storage.
+
+Only after the user presses Import (or Import anyway) does Rust parse the complete
+structured document. Exact row/column/field/value warnings are then measured from
+that candidate. If a shape threshold is exceeded without an earlier confirmation,
+the dialog retains that Rust session until Import anyway, cancellation, or format
+correction. Confirming publishes the same session without reparsing; cancellation
+or changing settings disposes it. The active document and undo history stay intact
+until successful publication. TSX holds session handles, not a second dataset.
+
+Structured rows store sorted (column index, value) pairs for present leaves only.
+Missing properties do not allocate cells, and editing an absent property inserts
+only that entry. Undo removes it again. Storage grows with present cells and
+schema/shape metadata rather than rows multiplied by schema width. Sparse reads
+use binary search; CSV/TSV keep contiguous O(1) lookup. Numeric sorting computes
+exact BigDecimal keys once per numeric cell per sort, then drops those temporary
+keys. Text-only sorts allocate no numeric-key array. Edits and undo rebuild keys
+when the active sort is reapplied, retaining original lexical numbers and stable
+equal-value ordering.
+
 The same 8 MiB / 100,000 records / 512 columns / 1,000,000 fields / 1 MiB field
-warnings apply. No record is silently truncated. Parsing, detection and mapping
-remain synchronous on the browser thread; large inputs can block the tab and
+warnings apply. No record is silently truncated. Full parsing and sorting still
+run synchronously after Import confirmation; large inputs can block the tab, and
 memory exhaustion cannot be recovered as a normal parsing error. Windows remain
-bounded to 256 rows and existing column/byte previews.
+bounded to 256 rows and existing column/byte previews. Native scaling benchmarks
+and their commands/results are recorded in [structured performance](structured-performance.md).

@@ -24,6 +24,8 @@ pub const LARGE_FIELD_BYTES: usize = 1024 * 1024;
 /// rejected, and the strict parser remains the authority on the final shape.
 #[derive(JsObject, Default)]
 pub struct ImportSize {
+    /// False during structured review; exact dimensions are measured after Import.
+    pub dimensions_known: bool,
     /// Logical records, including a header record and blank records.
     pub records: u32,
     /// Fields in the widest record.
@@ -75,6 +77,7 @@ impl Tally {
     }
     fn size(&self, records: usize, bytes: usize) -> ImportSize {
         ImportSize {
+            dimensions_known: true,
             records: saturating_u32(records),
             columns: saturating_u32(self.columns),
             cells: saturating_u32(self.cells),
@@ -104,6 +107,33 @@ impl ImportDetector {
 
 /// The scan behind `ImportDetector.inspect` and `ImportSource.inspect`.
 pub(crate) fn analyze(input: &[u8], filename: &str) -> Result<ImportAnalysis, EngineError> {
+    // Detection must not traverse or parse a structured file before confirmation.
+    // A truncated UTF-8 character at the sample boundary is not an encoding error.
+    let sample = &input[..input.len().min(64 * 1024)];
+    let sample = match std::str::from_utf8(sample) {
+        Ok(text) => text,
+        Err(e) if e.error_len().is_none() => std::str::from_utf8(&sample[..e.valid_up_to()])
+            .map_err(|_| {
+                EngineError::new("INVALID_UTF8", "Save the file as UTF-8 and try again.")
+            })?,
+        Err(_) => {
+            return Err(EngineError::new(
+                "INVALID_UTF8",
+                "Save the file as UTF-8 and try again.",
+            ));
+        }
+    };
+    let format = detect_format(sample, filename, false);
+    if matches!(format, "json" | "ndjson" | "xml") {
+        return Ok(ImportAnalysis {
+            format: format.into(),
+            delimiter: ",".into(),
+            ambiguous: false,
+            byte_length: saturating_u32(input.len()),
+            comma: structured_review_size(input.len()),
+            tab: structured_review_size(input.len()),
+        });
+    }
     let text = std::str::from_utf8(input)
         .map_err(|_| EngineError::new("INVALID_UTF8", "Save the file as UTF-8 and try again."))?;
     let bytes = text.as_bytes();
@@ -399,5 +429,39 @@ pub(crate) fn display_value(value: &CellValue) -> &str {
         CellValue::Boolean(false) => "false",
         CellValue::Null => "null",
         CellValue::Missing => "",
+    }
+}
+
+/// Structured review is byte metadata only: no parser and no dataset allocation.
+pub(crate) fn structured_review_size(bytes: usize) -> ImportSize {
+    ImportSize {
+        large: bytes > LARGE_INPUT_BYTES,
+        ..Default::default()
+    }
+}
+
+/// Exact advisory dimensions of an already parsed candidate. No dataset copy.
+pub(crate) fn document_size(document: &Document, bytes: usize) -> ImportSize {
+    let mut cells = 0usize;
+    let mut longest = 0usize;
+    for row in &document.rows {
+        for value in row.cells().iter() {
+            if !matches!(value, CellValue::Missing) {
+                cells += 1;
+                longest = longest.max(display_value(value).len());
+            }
+        }
+    }
+    ImportSize {
+        dimensions_known: true,
+        records: saturating_u32(document.row_count()),
+        columns: saturating_u32(document.column_count()),
+        cells: saturating_u32(cells),
+        longest_field: saturating_u32(longest),
+        large: bytes > LARGE_INPUT_BYTES
+            || document.row_count() > LARGE_RECORDS
+            || document.column_count() > LARGE_COLUMNS
+            || cells > LARGE_CELLS
+            || longest > LARGE_FIELD_BYTES,
     }
 }

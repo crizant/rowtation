@@ -39,38 +39,22 @@ impl ImportSource {
         self.bytes.len() as f64
     }
 
-    /// Measure a structured candidate using its actual flattened shape. Parsing
-    /// errors leave this source available for format correction.
+    /// Structured review checks byte size only, without parsing or validating a
+    /// dataset. Exact dimensions and syntax errors are available after Import.
     pub fn inspect_format(
         &self,
         format: String,
     ) -> Result<crate::inspection::ImportSize, EngineError> {
-        let doc = crate::formats::structured::parse(&self.bytes, &format)?;
-        let mut cells = 0usize;
-        let mut longest = 0usize;
-        for row in &doc.rows {
-            for value in row.cells() {
-                if !matches!(value, crate::document::CellValue::Missing) {
-                    cells += 1;
-                    longest = longest.max(crate::inspection::display_value(value).len());
-                }
-            }
+        if !matches!(format.as_str(), "json" | "ndjson" | "xml") {
+            return Err(EngineError::new(
+                "INVALID_FORMAT",
+                "Choose JSON, NDJSON or XML.",
+            ));
         }
-        use crate::inspection::*;
-        Ok(ImportSize {
-            records: crate::session::saturating_u32(doc.row_count()),
-            columns: crate::session::saturating_u32(doc.column_count()),
-            cells: crate::session::saturating_u32(cells),
-            longest_field: crate::session::saturating_u32(longest),
-            large: self.bytes.len() > LARGE_INPUT_BYTES
-                || doc.row_count() > LARGE_RECORDS
-                || doc.column_count() > LARGE_COLUMNS
-                || cells > LARGE_CELLS
-                || longest > LARGE_FIELD_BYTES,
-        })
+        Ok(crate::inspection::structured_review_size(self.bytes.len()))
     }
 
-    /// Suggest a separator and measure the whole input, as `ImportDetector.inspect`.
+    /// Detect a structured prefix or measure delimited input, as `ImportDetector.inspect`.
     pub fn inspect(&self) -> Result<ImportAnalysis, EngineError> {
         analyze(&self.bytes, &self.name)
     }

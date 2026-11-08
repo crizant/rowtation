@@ -55,8 +55,9 @@ There are no size caps on input, rows, columns, stored fields, value length or
 serialized output; the practical ceiling is the browser tab's memory and WASM's
 4 GiB address space. A picked or dropped file above 8 MiB is held unread until
 the user confirms; it is then read in 16 MiB slices into one Rust buffer that JS
-never mirrors. The review step measures the whole input in Rust and asks for
-confirmation ("Import anyway") above 8 MiB, 100,000 records, 512 columns,
+never mirrors. Delimited review measures the whole input in Rust. Structured review detects
+format from a bounded prefix, then parses once after Import; exact shape warnings
+retain the parsed candidate for confirmation. The workflow asks for confirmation ("Import anyway") above 8 MiB, 100,000 records, 512 columns,
 1,000,000 fields or a 1 MiB field. These thresholds are advisory, not measured
 performance limits. Row windows return at most 256 rows and can be narrowed to a
 column range and to 512-byte previews. The grid keeps a bounded 256-row cache

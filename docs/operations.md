@@ -9,7 +9,7 @@ worker. No recent history, persistence, download UI is added.
 
 Ascending sorts by canonical type: Number, Boolean, nonempty Text, empty Text,
 Null, Missing. Descending reverses that order, including the empty ranks. Numbers
-compare as arbitrary-precision decimals; equal numeric values retain imported row
+compare as arbitrary-precision decimals, with keys parsed once per numeric cell per sort; equal numeric values retain imported row
 order. Invalid future numeric lexical forms sort after valid numbers and compare lexically.
 Booleans sort false before true. Text uses case-sensitive UTF-8 lexical order.
 CSV/TSV imports contain Text only: `001`, `10`, `2` remain text and sort in that

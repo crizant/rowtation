@@ -2,7 +2,7 @@
 //! capped here; the import review warns about large input before parsing.
 use super::records::Records;
 use crate::{
-    document::{CellValue, Column, Document, Row},
+    document::{CellValue, Column, Document, Row, RowCells},
     error::EngineError,
 };
 
@@ -75,7 +75,7 @@ pub fn parse(input: &[u8], separator: &str, headers: bool) -> Result<Document, E
         }
         rows.push(Row {
             id: rows.len() as u32 + 1,
-            cells: record.iter().map(|s| CellValue::Text(s.into())).collect(),
+            cells: RowCells::Dense(record.iter().map(|s| CellValue::Text(s.into())).collect()),
         });
     }
     Document::new(columns, rows, delimiter, headers)
@@ -98,7 +98,7 @@ pub fn serialize(
         document
             .rows
             .first()
-            .and_then(|row| match row.cells.first() {
+            .and_then(|row| match row.cells.get(0) {
                 Some(CellValue::Text(text)) => Some(text.as_str()),
                 _ => None,
             })
@@ -120,12 +120,17 @@ pub fn serialize(
             .map_err(write_error)?;
     }
     for row in &document.rows {
-        let length = row
-            .cells
+        let RowCells::Dense(cells) = &row.cells else {
+            return Err(EngineError::new(
+                "LOSSY_EXPORT",
+                "Structured export requires an explicit conversion policy.",
+            ));
+        };
+        let length = cells
             .iter()
             .rposition(|c| !matches!(c, CellValue::Missing))
             .map_or(0, |i| i + 1);
-        let fields: Result<Vec<&str>, EngineError> = row.cells[..length].iter().map(|c| match c {
+        let fields: Result<Vec<&str>, EngineError> = cells[..length].iter().map(|c| match c {
             CellValue::Text(text) => Ok(text.as_str()),
             _ => Err(EngineError::new("LOSSY_EXPORT", "Delimited text cannot preserve interior missing, null or typed values without a conversion policy.")),
         }).collect();
@@ -149,14 +154,14 @@ mod tests {
             CellValue::Number("9007199254740993".into()),
         ] {
             let mut document = parse(b"a,b\nx,y", ",", true).unwrap();
-            document.rows[0].cells[0] = value;
+            document.rows[0].cells.set(0, value);
             assert_eq!(
                 serialize(&document, ",", true).unwrap_err().code(),
                 "LOSSY_EXPORT"
             );
         }
         let mut document = parse(b"a,b\nx,y", ",", true).unwrap();
-        document.rows[0].cells[1] = CellValue::Missing;
+        document.rows[0].cells.set(1, CellValue::Missing);
         assert_eq!(serialize(&document, ",", true).unwrap(), b"a,b\nx\n");
     }
 }

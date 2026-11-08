@@ -1,6 +1,6 @@
 //! Structured input maps leaves into canonical cells; shapes contain no values.
 use crate::{
-    document::{CellValue, Column, Document, Row},
+    document::{CellValue, Column, Document, Row, RowCells},
     error::EngineError,
 };
 use serde::{
@@ -91,16 +91,40 @@ fn key_path(parent: &str, key: &str) -> String {
     }
 }
 #[derive(Default)]
-struct Builder {
+struct Builder<'a> {
+    source: &'a str,
     columns: Vec<Column>,
     indices: HashMap<String, usize>,
     rows: Vec<Row>,
     shapes: Vec<Shape>,
 }
-impl Builder {
+impl Builder<'_> {
+    fn decode<'a, T: Deserialize<'a>>(&self, raw: &'a str) -> Result<T, EngineError> {
+        serde_json::from_str(raw).map_err(|e| {
+            // RawValue borrows the original source: no substring copies or
+            // per-value line table are needed. Scan the prefix only on failure.
+            let offset = raw.as_ptr() as usize - self.source.as_ptr() as usize;
+            let prefix = &self.source[..offset];
+            let line = prefix.bytes().filter(|b| *b == b'\n').count() + e.line();
+            let column = if e.line() == 1 {
+                prefix.rsplit('\n').next().map_or(0, str::len) + e.column()
+            } else {
+                e.column()
+            };
+            let message = e.to_string();
+            let message = message
+                .rsplit_once(" at line ")
+                .map_or(message.as_str(), |(reason, _)| reason);
+            EngineError::new(
+                "INVALID_JSON",
+                format!("{message} at line {line} column {column}"),
+            )
+            .at(line, self.rows.len() + 1)
+        })
+    }
     fn leaf(
         &mut self,
-        cells: &mut Vec<CellValue>,
+        cells: &mut Vec<(usize, CellValue)>,
         path: String,
         value: CellValue,
     ) -> Result<Shape, EngineError> {
@@ -117,21 +141,20 @@ impl Builder {
             self.indices.insert(path, i);
             i
         };
-        cells.resize_with(cells.len().max(index + 1), || CellValue::Missing);
-        cells[index] = value;
+        cells.push((index, value));
         Ok(Shape::Cell(self.columns[index].id))
     }
     fn json(
         &mut self,
         raw: &str,
         path: &str,
-        cells: &mut Vec<CellValue>,
+        cells: &mut Vec<(usize, CellValue)>,
         level: usize,
     ) -> Result<Shape, EngineError> {
         depth(level)?;
         match raw.as_bytes().first() {
             Some(b'{') => {
-                let Fields(fields) = decode(raw)?;
+                let Fields(fields) = self.decode(raw)?;
                 let mut children = Vec::with_capacity(fields.len());
                 for (key, value) in fields {
                     let child = self.json(value.get(), &key_path(path, &key), cells, level + 1)?;
@@ -140,7 +163,7 @@ impl Builder {
                 Ok(Shape::Object(children))
             }
             Some(b'[') => {
-                let values: Vec<&RawValue> = decode(raw)?;
+                let values: Vec<&RawValue> = self.decode(raw)?;
                 let mut children = Vec::with_capacity(values.len());
                 for (i, value) in values.into_iter().enumerate() {
                     children.push(self.json(
@@ -157,7 +180,7 @@ impl Builder {
                     "null" => CellValue::Null,
                     "true" => CellValue::Boolean(true),
                     "false" => CellValue::Boolean(false),
-                    s if s.starts_with('"') => CellValue::Text(decode(s)?),
+                    s if s.starts_with('"') => CellValue::Text(self.decode(s)?),
                     s => CellValue::Number(s.into()),
                 };
                 self.leaf(cells, path.into(), value)
@@ -174,9 +197,17 @@ impl Builder {
         let shape = self.json(raw, "", &mut cells, 0)?;
         self.push(cells, shape)
     }
-    fn push(&mut self, cells: Vec<CellValue>, shape: Shape) -> Result<(), EngineError> {
+    fn push(
+        &mut self,
+        mut cells: Vec<(usize, CellValue)>,
+        shape: Shape,
+    ) -> Result<(), EngineError> {
         let id = u32::try_from(self.rows.len() + 1).map_err(|_| invalid("Too many rows."))?;
-        self.rows.push(Row { id, cells });
+        cells.sort_unstable_by_key(|(index, _)| *index);
+        self.rows.push(Row {
+            id,
+            cells: RowCells::Sparse(cells),
+        });
         self.shapes.push(shape);
         Ok(())
     }
@@ -210,7 +241,10 @@ pub fn parse(input: &[u8], format: &str) -> Result<Document, EngineError> {
     if format == "xml" {
         return xml(text);
     }
-    let mut builder = Builder::default();
+    let mut builder = Builder {
+        source: text,
+        ..Default::default()
+    };
     if format == "ndjson" {
         for (line, value) in text.lines().enumerate() {
             let value = value.trim();
@@ -317,12 +351,12 @@ fn namespaces(node: roxmltree::Node) -> Vec<(Option<String>, String)> {
         .map(|n| (n.name().map(str::to_owned), n.uri().into()))
         .collect()
 }
-impl Builder {
+impl Builder<'_> {
     fn xml_node(
         &mut self,
         node: roxmltree::Node,
         path: &str,
-        cells: &mut Vec<CellValue>,
+        cells: &mut Vec<(usize, CellValue)>,
         level: usize,
     ) -> Result<Shape, EngineError> {
         depth(level)?;

@@ -85,7 +85,23 @@ fn text(value: &CellValue) -> Option<&str> {
         _ => None,
     }
 }
-fn compare(a: &CellValue, b: &CellValue) -> Ordering {
+fn numeric_key(value: &CellValue) -> Option<bigdecimal::BigDecimal> {
+    let CellValue::Number(value) = value else {
+        return None;
+    };
+    #[cfg(test)]
+    NUMBER_PARSES.with(|count| count.set(count.get() + 1));
+    bigdecimal::BigDecimal::from_str(value).ok()
+}
+#[cfg(test)]
+thread_local! { static NUMBER_PARSES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) }; }
+
+fn compare_keyed(
+    a: &CellValue,
+    b: &CellValue,
+    a_key: Option<&bigdecimal::BigDecimal>,
+    b_key: Option<&bigdecimal::BigDecimal>,
+) -> Ordering {
     fn rank(v: &CellValue) -> u8 {
         match v {
             CellValue::Number(_) => 0,
@@ -97,14 +113,11 @@ fn compare(a: &CellValue, b: &CellValue) -> Ordering {
         }
     }
     rank(a).cmp(&rank(b)).then_with(|| match (a, b) {
-        (CellValue::Number(a), CellValue::Number(b)) => match (
-            bigdecimal::BigDecimal::from_str(a),
-            bigdecimal::BigDecimal::from_str(b),
-        ) {
-            (Ok(a), Ok(b)) => a.cmp(&b),
-            (Ok(_), Err(_)) => Ordering::Less,
-            (Err(_), Ok(_)) => Ordering::Greater,
-            (Err(_), Err(_)) => a.cmp(b),
+        (CellValue::Number(a), CellValue::Number(b)) => match (a_key, b_key) {
+            (Some(a), Some(b)) => a.cmp(b),
+            (Some(_), None) => Ordering::Less,
+            (None, Some(_)) => Ordering::Greater,
+            (None, None) => a.cmp(b),
         },
         (CellValue::Text(a), CellValue::Text(b)) => a.cmp(b),
         (CellValue::Boolean(a), CellValue::Boolean(b)) => a.cmp(b),
@@ -137,9 +150,29 @@ impl Operations {
         Ok(())
     }
     fn reorder(&mut self, doc: &Document) {
-        self.order = (0..doc.row_count()).collect();
-        if let Some((c, descending)) = self.sort {
+        let Some((c, descending)) = self.sort else {
+            self.order = (0..doc.row_count()).collect();
+            return;
+        };
+        // Allocate numeric keys only when this column actually contains numbers.
+        // The immutable per-sort keys are dropped afterward; edits/undo naturally
+        // rebuild them, and lexical CellValue payloads are never altered.
+        let mut numbers: Option<Vec<Option<bigdecimal::BigDecimal>>> = None;
+        self.order = (0..doc.row_count())
+            .map(|i| {
+                if let Some(value @ CellValue::Number(_)) = doc.rows[i].cells.get((c - 1) as usize)
+                {
+                    let keys =
+                        numbers.get_or_insert_with(|| (0..doc.row_count()).map(|_| None).collect());
+                    keys[i] = numeric_key(value);
+                }
+                i
+            })
+            .collect();
+        {
             self.order.sort_by(|&a, &b| {
+                let a_key = numbers.as_ref().and_then(|keys| keys[a].as_ref());
+                let b_key = numbers.as_ref().and_then(|keys| keys[b].as_ref());
                 let a = doc.rows[a]
                     .cells
                     .get((c - 1) as usize)
@@ -148,7 +181,7 @@ impl Operations {
                     .cells
                     .get((c - 1) as usize)
                     .unwrap_or(&CellValue::Missing);
-                let order = compare(a, b);
+                let order = compare_keyed(a, b, a_key, b_key);
                 if descending { order.reverse() } else { order }
             });
         }
@@ -435,11 +468,7 @@ impl Operations {
                 .or_insert_with(|| c.original.clone());
             let clean = value == original;
             let cells = &mut doc.rows[(c.row - 1) as usize].cells;
-            cells.resize(cells.len().max(c.column as usize), CellValue::Missing);
-            cells[(c.column - 1) as usize] = value.clone();
-            while cells.last() == Some(&CellValue::Missing) {
-                cells.pop();
-            }
+            cells.set((c.column - 1) as usize, value.clone());
             if clean {
                 self.originals.remove(&(c.row, c.column));
             }
@@ -504,6 +533,23 @@ fn cost(changes: &[Change]) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn compare(a: &CellValue, b: &CellValue) -> Ordering {
+        compare_keyed(a, b, numeric_key(a).as_ref(), numeric_key(b).as_ref())
+    }
+    #[test]
+    fn numeric_sort_parses_each_key_once() {
+        let input = (0..2000)
+            .map(|i| format!("{{\"n\":{}.000000000000000000001}}\n", (i * 7919) % 2000))
+            .collect::<String>();
+        let doc = crate::formats::structured::parse(input.as_bytes(), "ndjson").unwrap();
+        let mut ops = Operations::default();
+        NUMBER_PARSES.with(|count| count.set(0));
+        ops.sort(&doc, Some(1), false).unwrap();
+        NUMBER_PARSES.with(|count| assert_eq!(count.get(), 2000));
+        assert_eq!(ops.order[0], 0);
+        ops.sort(&doc, Some(1), true).unwrap();
+        NUMBER_PARSES.with(|count| assert_eq!(count.get(), 4000));
+    }
     #[test]
     fn mixed_types_and_exact_numeric_comparison() {
         let n = |s: &str| CellValue::Number(s.into());

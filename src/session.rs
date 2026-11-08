@@ -245,6 +245,12 @@ impl DocumentSession {
         }
     }
 
+    /// Exact import warning dimensions of this already parsed document. Source
+    /// byte length comes from the retained candidate; this never reparses input.
+    pub fn import_size(&self, byte_length: u32) -> crate::inspection::ImportSize {
+        crate::inspection::document_size(&self.document, byte_length as usize)
+    }
+
     /// Retrieve the ordered schema.
     pub fn columns(&self) -> Vec<ColumnMetadata> {
         self.document

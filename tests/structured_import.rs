@@ -240,10 +240,153 @@ fn detection_and_review_use_content_and_hints() {
     }
     let source = ImportSource::from_text(r#"[{"a":{"b":1}},{}]"#.into(), "data.json".into());
     let size = source.inspect_format("json".into()).unwrap();
-    assert_eq!((size.records, size.columns, size.cells), (2, 1, 1));
+    assert!(!size.dimensions_known);
+    let mut options = ImportOptions::default();
+    options.format = Some("json".into());
+    let session = DocumentSession::from_source(&source, options).unwrap();
+    let exact = session.import_size(source.byte_length() as u32);
+    assert!(exact.dimensions_known);
+    assert_eq!((exact.records, exact.columns, exact.cells), (2, 1, 1));
     let source = ImportSource::from_text(
         format!("{{\"a\":\"{}\"}}", "x".repeat(1024 * 1024 + 1)),
         "big.json".into(),
     );
+    assert!(!source.inspect_format("json".into()).unwrap().large);
+    let mut options = ImportOptions::default();
+    options.format = Some("json".into());
+    let session = DocumentSession::from_source(&source, options).unwrap();
+    assert!(session.import_size(source.byte_length() as u32).large);
+}
+
+#[test]
+fn nested_json_errors_use_document_lines_including_unicode_and_crlf() {
+    for newline in ["\n", "\r\n"] {
+        let input = [
+            "[",
+            "  {\"雪\": \"x\"},",
+            "  {",
+            "    \"nested\": {",
+            "      \"keys\": [",
+            "        {\"dup\": 1,",
+            "         \"dup\": 2}",
+            "      ]",
+            "    }",
+            "  }",
+            "]",
+        ]
+        .join(newline);
+        let e = structured::parse(input.as_bytes(), "json").unwrap_err();
+        assert_eq!(e.line(), Some(7));
+        assert_eq!(e.record(), Some(2));
+        assert!(e.message().contains("at line 7 column"), "{e}");
+        let malformed = input.replace("\"dup\": 2", "\"dup\": !");
+        assert_eq!(
+            structured::parse(malformed.as_bytes(), "json")
+                .unwrap_err()
+                .line(),
+            Some(7)
+        );
+    }
+}
+
+#[test]
+fn heterogeneous_rows_allocate_only_present_cells_and_missing_edits_stay_sparse() {
+    use nsh_app_rowtation::document::RowCells;
+    for format in ["json", "ndjson"] {
+        let records = (0..10_000)
+            .map(|i| format!("{{\"field_{i}\":{i}}}"))
+            .collect::<Vec<_>>();
+        let input = if format == "json" {
+            format!("[{}]", records.join(","))
+        } else {
+            records.join("\n")
+        };
+        let doc = structured::parse(input.as_bytes(), format).unwrap();
+        assert_eq!(doc.column_count(), 10_000);
+        assert_eq!(
+            doc.window(0, 256)
+                .unwrap()
+                .iter()
+                .map(|r| r.cells().stored_len())
+                .sum::<usize>(),
+            256
+        );
+        // Check the end too: the old dense implementation allocated 10,000 cells
+        // in this one-field row, and ~50 million Missing cells across the file.
+        assert_eq!(doc.window(9999, 1).unwrap()[0].cells().stored_len(), 1);
+        assert!(matches!(
+            doc.window(9999, 1).unwrap()[0].cells(),
+            RowCells::Sparse(_)
+        ));
+        assert_eq!(
+            doc.cell(10_000, 10_000).unwrap(),
+            &CellValue::Number("9999".into())
+        );
+        assert_eq!(doc.cell(10_000, 1).unwrap(), &CellValue::Missing);
+        let mut s = session(&input, format);
+        s.edit_cell(1, 10_000, "new".into(), 0).unwrap();
+        assert_eq!(s.read_cell(1, 10_000).unwrap().text.as_deref(), Some("new"));
+        s.history(false).unwrap();
+        assert!(matches!(
+            s.read_cell(1, 10_000).unwrap().kind,
+            nsh_app_rowtation::session::CellKind::Missing
+        ));
+        assert!(!s.metadata().dirty);
+        s.history(true).unwrap();
+        assert!(s.metadata().dirty);
+        let profile = s.profile(10_000).unwrap();
+        assert_eq!((profile.unique_count, profile.missing_count), (2, 9998));
+    }
+    let doc = delimited::parse(b"a,b\n1,2", ",", true).unwrap();
+    assert!(matches!(
+        doc.window(0, 1).unwrap()[0].cells(),
+        RowCells::Dense(_)
+    ));
+}
+
+#[test]
+fn structured_review_neither_validates_nor_parses_full_input() {
+    // An invalid tail beyond the 64-KiB detection sample must not be visited
+    // until Import. Review still exposes byte-size confirmation first.
+    let input = format!("[{{\"x\":\"{}\"}}]BROKEN", "x".repeat(9 * 1024 * 1024));
+    let source = ImportSource::from_text(input, "large.json".into());
+    let analysis = source.inspect().unwrap();
+    assert_eq!(analysis.format, "json");
+    assert!(analysis.comma.large);
+    assert!(!analysis.comma.dimensions_known);
     assert!(source.inspect_format("json".into()).unwrap().large);
+    let mut options = ImportOptions::default();
+    options.format = Some("json".into());
+    assert!(DocumentSession::from_source(&source, options).is_err());
+}
+
+#[test]
+fn numeric_sort_keys_preserve_equal_values_and_rebuild_after_edit_and_history() {
+    let mut s = session(
+        r#"[{"n":9007199254740993},{"n":9007199254740992},{"n":1.000},{"n":1e0},{"n":-0},{"n":0.0},{"n":-1.234567890123456789012345678901}]"#,
+        "json",
+    );
+    let rows = |s: &DocumentSession| {
+        let mut w = nsh_app_rowtation::session::RowWindow::default();
+        w.limit = 7;
+        s.rows(w)
+            .unwrap()
+            .rows
+            .into_iter()
+            .map(|r| r.id)
+            .collect::<Vec<_>>()
+    };
+    s.sort(Some(1), false).unwrap();
+    assert_eq!(rows(&s), [7, 5, 6, 3, 4, 2, 1]);
+    s.sort(Some(1), true).unwrap();
+    assert_eq!(rows(&s), [1, 2, 3, 4, 5, 6, 7]);
+    s.edit_cell(7, 1, "text".into(), 0).unwrap();
+    assert_eq!(rows(&s)[0], 7);
+    s.history(false).unwrap();
+    assert_eq!(rows(&s), [1, 2, 3, 4, 5, 6, 7]);
+    s.history(true).unwrap();
+    assert_eq!(rows(&s)[0], 7);
+    s.history(false).unwrap();
+    assert!(!s.metadata().dirty);
+    assert_eq!(s.read_cell(3, 1).unwrap().number.as_deref(), Some("1.000"));
 }

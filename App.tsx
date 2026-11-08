@@ -596,9 +596,13 @@ export function App() {
   const headers = signal(true);
   const format = signal("csv");
   const structuredSize = signal<ImportSize | null>(null);
+  const prepared = signal<OpenDocument | null>(null);
   const delimited = () => format() === "csv" || format() === "tsv";
+  function discardPrepared() { prepared()?.dispose(); prepared.set(null); structuredSize.set(null); }
   function chooseFormat(value: string) {
-    format.set(value); error.set(""); structuredSize.set(null);
+    if (format() === value && prepared()) return;
+    discardPrepared();
+    format.set(value); error.set("");
     if (value === "csv" || value === "tsv") { delimiter.set(value === "tsv" ? "\t" : ","); return; }
     try { structuredSize.set(draft()?.inspectFormat(value) ?? null); } catch (cause) { fail(cause); }
   }
@@ -608,14 +612,15 @@ export function App() {
   const dragging = signal(false);
   let alive = true;
   let request = 0;
-  cleanup(() => { alive = false; request++; BrowserImport.cancelPending(); draft()?.dispose(); active()?.dispose(); });
+  cleanup(() => { alive = false; request++; BrowserImport.cancelPending(); prepared()?.dispose(); draft()?.dispose(); active()?.dispose(); });
   keymap.bind("ctrl+shift+d", () => { diagnosticsOn.set(!diagnosticsOn()); measurements.set([]); });
 
   /** Clears review state; the Rust-held file is released here or by cancelPending. */
   function clearDraft() {
     request++;
+    prepared()?.dispose(); prepared.set(null);
     draft()?.dispose();
-    draft.set(null); pending.set(null); analysis.set(null); busy.set(false); error.set(""); accepted.set(false);
+    draft.set(null); pending.set(null); analysis.set(null); structuredSize.set(null); busy.set(false); error.set(""); accepted.set(false);
   }
   function resetImport() { clearDraft(); BrowserImport.cancelPending(); }
   function dismiss() { resetImport(); mode.set(null); paste.set(""); }
@@ -683,15 +688,25 @@ export function App() {
     if (!alive || id !== request) return;
     let candidate: DocumentSession | null = null;
     try {
-      candidate = timed("Parse", () => DocumentSession.fromSource(source, options), () => bytes(source.byteLength));
-      const session = candidate;
-      const metadata = session.metadata();
-      const columns = session.columns();
-      let live = true;
-      const document: OpenDocument = { session, metadata, columns, name: source.name,
-        dispose: () => { if (live) { live = false; session.dispose(); } } };
+      let document = prepared();
+      if (!document) {
+        candidate = timed("Parse", () => DocumentSession.fromSource(source, options), () => bytes(source.byteLength));
+        const session = candidate;
+        const metadata = session.metadata();
+        let live = true;
+        document = { session, metadata, columns: [], name: source.name,
+          dispose: () => { if (live) { live = false; session.dispose(); } } };
+        prepared.set(document); candidate = null;
+        if (!delimited() || !size()?.dimensionsKnown) {
+          const exact = session.importSize(source.byteLength);
+          structuredSize.set(exact);
+          if (exact.large && !accepted()) return;
+        }
+      }
+      document.columns = document.session.columns();
+      prepared.set(null);
       active.set(document);
-      timeToNextFrame("Document open to next frame", `${metadata.columnCount} columns`);
+      timeToNextFrame("Document open to next frame", `${document.metadata.columnCount} columns`);
       // The session holds its own data; release the source bytes now.
       source.dispose(); draft.set(null); analysis.set(null); paste.set(""); mode.set(null);
     } catch (cause) { candidate?.dispose(); fail(cause); }
@@ -699,11 +714,12 @@ export function App() {
   }
 
   const compact = platform.desktop;
-  const size = () => { const result = analysis(); return !delimited() ? structuredSize() : result ? (delimiter() === "\t" ? result.tab : result.comma) : null; };
+  const size = () => { const result = analysis(); return structuredSize() ?? (result ? (delimiter() === "\t" ? result.tab : result.comma) : null); };
   const summary = () => {
     const result = analysis(), measured = size();
-    if (!result || !measured) return "Shape unavailable until parsing succeeds.";
-    const rows = Math.max(0, measured.records - (delimited() && headers() ? 1 : 0));
+    if (!result || !measured) return "";
+    if (!measured.dimensionsKnown) return `${bytes(result.byteLength)} · Row and column counts are checked when you import.`;
+    const rows = Math.max(0, measured.records - (delimited() && !prepared() && headers() ? 1 : 0));
     return `${bytes(result.byteLength)} · ${count(rows, "row", "rows")} · ${count(measured.columns, "column", "columns")} · longest field ${bytes(measured.longestField)}`;
   };
 
@@ -769,11 +785,11 @@ export function App() {
           </View>
           <If when={delimited()}>
           <ChoiceGroup>
-            <Choice mark="CSV" label="Comma" checked={delimiter() === ","} disabled={busy()} onSelect={() => delimiter.set(",")} />
-            <Choice mark="TSV" label="Tab" checked={delimiter() === "\t"} disabled={busy()} onSelect={() => delimiter.set("\t")} />
+            <Choice mark="CSV" label="Comma" checked={delimiter() === ","} disabled={busy()} onSelect={() => chooseFormat("csv")} />
+            <Choice mark="TSV" label="Tab" checked={delimiter() === "\t"} disabled={busy()} onSelect={() => chooseFormat("tsv")} />
           </ChoiceGroup>
           <View class="rounded-xl border border-border/70 px-4">
-            <Checkbox label="First row contains column headers" checked={headers()} disabled={busy()} onChange={value => headers.set(value)} />
+            <Checkbox label="First row contains column headers" checked={headers()} disabled={busy()} onChange={value => { discardPrepared(); headers.set(value); }} />
           </View>
           </If>
           <View class="gap-1">
