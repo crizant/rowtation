@@ -1,10 +1,9 @@
-import { computed, platform, signal, Text, View, windowSize } from "nsh";
+import { platform, signal, Text, View, windowSize } from "nsh";
 import { DataTable, type DataTableRange, type DataTableSelection } from "nsh/base";
-import type { CellSnapshot, ColumnMetadata, DocumentMetadata, DocumentSession, RowsSnapshot, RowWindow } from "rowtation/native";
+import type { CellSnapshot, ColumnMetadata, DocumentMetadata, DocumentSession, RowWindow } from "rowtation/native";
 import { measuring, record, timeToNextFrame } from "./diagnostics";
-
-/** Grid cells show at most this many UTF-8 bytes; the inspector reads whole values on demand. */
-export const PREVIEW_BYTES = 512;
+import { loadGridRows, PREVIEW_BYTES } from "./gridRowCache";
+export { cellText, PREVIEW_BYTES } from "./gridRowCache";
 
 export interface CellSelection {
   documentId: string;
@@ -14,13 +13,6 @@ export interface CellSelection {
   columnIndex: number;
   preview: CellSnapshot;
 }
-export function cellText(cell: CellSnapshot): string {
-  if (cell.kind === "missing") return "—";
-  if (cell.kind === "null") return "null";
-  const text = cell.text ?? cell.number ?? String(cell.boolean ?? "");
-  return cell.truncated ? `${text}…` : text;
-}
-
 /** Virtualized NSH table backed by Rust windows of the rows and columns in view, with previews of long values. */
 export function DataGrid(props: {
   session: DocumentSession;
@@ -28,10 +20,9 @@ export function DataGrid(props: {
   columns: ColumnMetadata[];
   onSelect: (selection: CellSelection | null, column: number | null) => void;
 }) {
-  const rows = signal<RowsSnapshot>({ documentId: props.metadata.id, revision: 0, offset: 0, columnOffset: 0, rows: [] });
   let visibleRows: DataTableRange = { start: 0, end: Math.min(32, props.metadata.rowCount) };
-  let visibleColumns: DataTableRange = { start: 0, end: Math.min(16, props.metadata.columnCount) };
-  let loadedColumns: DataTableRange = { start: 0, end: 0 };
+  // Start conservatively until the table reports its measured column range.
+  let visibleColumns: DataTableRange = { start: 0, end: Math.min(4, props.metadata.columnCount) };
   function fetch(window: RowWindow) {
     if (!measuring()) return props.session.rows(window);
     const started = performance.now();
@@ -43,31 +34,16 @@ export function DataGrid(props: {
     record("Row window", total, `${snapshot.rows.length} rows × ${window.columnLimit ?? props.metadata.columnCount} columns; Rust ${rust.toFixed(2)} ms measured, transfer ≈${Math.max(0, total - rust).toFixed(2)} ms estimated`);
     return snapshot;
   }
+  // This cache lives with the grid; document/revision and column changes invalidate reuse.
+  const cache = signal(loadGridRows(null, props.metadata, props.columns, visibleRows, visibleColumns, fetch));
+  const rows = () => cache().snapshot;
   function load() {
-    const start = Math.max(0, visibleRows.start - 4);
-    const end = Math.min(props.metadata.rowCount, visibleRows.end + 4);
-    const columns = visibleColumns.start >= loadedColumns.start && visibleColumns.end <= loadedColumns.end ? loadedColumns
-      : { start: Math.max(0, visibleColumns.start - 4), end: Math.min(props.metadata.columnCount, visibleColumns.end + 4) };
-    if (rows().offset === start && rows().rows.length === end - start && columns === loadedColumns) return;
-    const snapshots: RowsSnapshot["rows"] = [];
-    for (let offset = start; offset < end; offset += 256) {
-      snapshots.push(...fetch({ offset, limit: Math.min(256, end - offset), columnOffset: columns.start,
-        columnLimit: columns.end - columns.start, previewBytes: PREVIEW_BYTES }).rows);
-    }
-    loadedColumns = columns;
-    rows.set({ documentId: props.metadata.id, revision: props.metadata.revision, offset: start, columnOffset: columns.start, rows: snapshots });
-    timeToNextFrame("Grid update to next frame", `${snapshots.length} rows × ${columns.end - columns.start} columns`);
+    const previous = cache();
+    const next = loadGridRows(previous, props.metadata, props.columns, visibleRows, visibleColumns, fetch);
+    if (next === previous) return;
+    cache.set(next);
+    timeToNextFrame("Grid update to next frame", `${next.data.length} rows × ${next.columnEnd - next.snapshot.columnOffset} columns`);
   }
-  load();
-  // Objects keyed by column ID hold only the loaded columns; the table shows others empty until they load.
-  const data = computed(() => {
-    const keys = props.columns.slice(rows().columnOffset, loadedColumns.end).map(column => String(column.id));
-    return rows().rows.map(row => {
-      const cells: Record<string, string> = {};
-      row.cells.forEach((cell, i) => { cells[keys[i]] = cellText(cell); });
-      return cells;
-    });
-  });
   const selection = signal<DataTableSelection | null>(null);
   function select(next: DataTableSelection | null) {
     selection.set(next);
@@ -86,7 +62,7 @@ export function DataGrid(props: {
   const dense = () => platform.desktop && windowSize().width >= 900;
   return <DataTable class="flex-1 min-h-0 min-w-0 bg-background" testID="data-grid" accessibilityLabel="Document data"
     columns={props.columns.map((column) => ({ key: String(column.id), title: column.name || "(unnamed)", width: windowSize().width < 640 ? 148 : 176 }))}
-    data={data()} dataStart={rows().offset} rowCount={props.metadata.rowCount}
+    data={cache().data} dataStart={rows().offset} rowCount={props.metadata.rowCount}
     rowHeight={dense() ? 34 : 44} headerHeight={dense() ? 36 : 44} fontSize={13} rowHeader cellSelectable columnSelectable rowSelectable={false}
     movableColumns={false} resizableColumns={false} selectOnModifierPress={false} stripe={false} selection={selection()}
     onVisibleRowsChange={e => { visibleRows = e.range; load(); }}

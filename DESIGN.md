@@ -56,8 +56,11 @@ App Dialog centers explicitly on desktop and sits at the bottom below 640 points
 The import review uses radio tiles for the separator, a checkbox for the header
 row (it applies on import, not immediately), a measured size summary and, for
 large input, a warning with an "Import anyway" action.
-Its content scrolls when short viewports or large text need more room. All dialogs
-support Escape/backdrop dismissal and semantic NSH focus behavior. Mobile padding
+Its body scrolls when short viewports or large text need more room. Keep the
+heading and import actions outside that scroll area. Fixed-height paste fields
+clip their text overflow, use a monospace font and a slim app-styled scrollbar,
+and leave room for focus rings and button shadows. All dialogs support
+Escape/backdrop dismissal and semantic NSH focus behavior. Mobile padding
 includes a base 20-point inset plus the browser safe area.
 
 Do not show search, replace, sorting, editing, undo, export or modification

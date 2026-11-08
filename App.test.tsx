@@ -74,6 +74,16 @@ test("virtualized row windows and keyboard selection survive offscreen jumps", a
   await app.scroll("data-grid", -2000);
   await app.keyboard.press("arrowdown");
   expect(app.texts()).toContain("Row 3 · Column 2");
+  // Page navigation crosses the cache without changing the selected column.
+  for (let page = 0; page < 20; page++) await app.keyboard.press("pagedown");
+  const selected = app.texts().find(text => /^Row \d+ · Column 2$/.test(text));
+  const row = Number(selected?.split(" ")[1]);
+  expect(row > 256).toBe(true);
+  expect(app.texts()).toContain(`City ${row}`);
+  for (let page = 0; page < 21; page++) await app.keyboard.press("pageup");
+  expect(app.texts()).toContain("Row 1 · Column 2");
+  await app.keyboard.press("arrowdown");
+  expect(app.texts()).toContain("Row 2 · Column 2");
 });
 
 test("app runtime creates, queries, serializes and disposes the Rust document", async () => {
@@ -166,4 +176,19 @@ test("diagnostics are off until requested and stay in the tab", async () => {
   expect(log).toContain("Row window: ");
   await app.keyboard.press("ctrl+shift+d");
   expect(app.texts()).not.toContain("Diagnostics · local only");
+});
+
+
+test("long pasted text stays inside the field and import actions remain reachable in short dialogs", async () => {
+  const app = await open("./App.tsx", { width: 1066, height: 688 });
+  await app.press("Paste from clipboard");
+  await app.paste("paste-input", { text: "id,city\n" + Array.from({ length: 100 }, (_, i) => `${i + 1},Brisbane`).join("\n") });
+  // The outer dialog has no scroll range when this content fits.
+  expect(app.texts()).toContain("Paste your data");
+  await app.setViewport(390, 360);
+  expect(app.texts()).toContain("Paste your data");
+  await app.press("Review import");
+  expect(app.texts()).toContain("Import “Pasted data”");
+  await app.press("Import document");
+  await app.waitFor("100 rows · 2 columns");
 });

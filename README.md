@@ -56,9 +56,10 @@ never mirrors. The review step measures the whole input in Rust and asks for
 confirmation ("Import anyway") above 8 MiB, 100,000 records, 512 columns,
 1,000,000 fields or a 1 MiB field. These thresholds are advisory, not measured
 performance limits. Row windows return at most 256 rows and can be narrowed to a
-column range and to 512-byte previews; the grid fetches only what is in view and
-the inspector reads whole values on demand. Column statistics are exact and are
-counted in slices between frames. Parsing remains synchronous on the browser thread.
+column range and to 512-byte previews. The grid keeps a bounded 256-row cache
+with overscan for the visible columns, reusing overlapping rows. The inspector
+reads whole values on demand. Column statistics are exact and are counted in
+slices between frames. Parsing remains synchronous on the browser thread.
 
 Press Ctrl+Shift+D to show local diagnostics: read, inspect, parse and profiling
 times; row-window time with Rust's measured share and an estimated transfer share
