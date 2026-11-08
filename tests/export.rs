@@ -165,15 +165,22 @@ fn json_xml_explicit_policy_and_rejections() {
     assert!(duplicate.serialize(options("json")).is_err());
 }
 #[test]
-fn xml_names_follow_xml_1_0_and_round_trip_unicode() {
-    let invalid = session(r#"[{"col²":"x"}]"#, "json");
-    let before = invalid.metadata();
-    let err = invalid.serialize(options("xml")).unwrap_err();
-    assert_eq!(err.code(), "LOSSY_EXPORT");
-    assert!(err.message().contains("XML name"));
-    assert_eq!(invalid.metadata().revision, before.revision);
-    assert!(!invalid.metadata().dirty);
-    assert_eq!(invalid.read_cell(1, 1).unwrap().text.as_deref(), Some("x"));
+fn generic_xml_requires_ncnames_and_round_trips_unicode() {
+    for key in ["foo:bar", ":foo", "foo:", "col²"] {
+        let invalid = session(&format!(r#"[{{"{key}":"x"}}]"#), "json");
+        let before = invalid.metadata();
+        let err = invalid.serialize(options("xml")).unwrap_err();
+        assert_eq!(err.code(), "LOSSY_EXPORT");
+        assert!(err.message().contains("XML name"));
+        assert_eq!(invalid.metadata().revision, before.revision);
+        assert!(!invalid.metadata().dirty);
+        assert_eq!(invalid.read_cell(1, 1).unwrap().text.as_deref(), Some("x"));
+    }
+    let csv = session("foo:bar\nx", "csv");
+    assert_eq!(
+        csv.serialize(options("xml")).unwrap_err().code(),
+        "LOSSY_EXPORT"
+    );
     // µ is Unicode alphabetic but not an XML 1.0 NameStartChar.
     let micro = session(r#"[{"µ":"x"}]"#, "json");
     assert_eq!(

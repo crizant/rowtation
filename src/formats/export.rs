@@ -275,11 +275,11 @@ fn xml_escape(s: &str, attr: bool) -> Result<String, EngineError> {
         s
     })
 }
-// XML 1.0 NameStartChar. Unicode alphabetic is a different set (for example µ).
+// NCName start: XML 1.0 NameStartChar without ':'. Generic conversion emits no namespace bindings.
 fn xml_name_start(c: char) -> bool {
     matches!(
         c,
-        ':' | 'A'..='Z'
+        'A'..='Z'
             | '_'
             | 'a'..='z'
             | '\u{C0}'..='\u{D6}'
@@ -296,7 +296,7 @@ fn xml_name_start(c: char) -> bool {
             | '\u{10000}'..='\u{EFFFF}'
     )
 }
-// XML 1.0 NameChar. Unicode alphanumeric includes characters this production rejects, such as ².
+// NCName char: XML 1.0 NameChar without ':'. Unicode alphanumeric includes characters this production rejects, such as ².
 fn xml_name_char(c: char) -> bool {
     xml_name_start(c)
         || matches!(
