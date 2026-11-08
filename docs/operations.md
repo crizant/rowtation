@@ -1,9 +1,10 @@
 # Data operations
 
 All values, view ordering, matching, transactions and column statistics live in
-Rust/WASM. The UI retains bounded row previews and transient drafts. Operations
-are synchronous on the browser thread; search input is debounced, not moved to a
-worker. No recent history or persistence is added. See [export](export.md) for downloads and conversion.
+Rust/WASM. The UI retains bounded row previews and transient drafts. Search input
+is debounced and scanned incrementally in Rust on the browser thread, yielding
+between slices. Other operations remain synchronous. No recent history or
+persistence is added. See [export](export.md) for downloads and conversion.
 
 ## Sorting
 
@@ -40,16 +41,14 @@ Search is bounded to 4096 pattern bytes, a 1 MiB compiled regex size and DFA cac
 64 MiB of actual searchable UTF-8 payload (Text, numeric tokens and boolean spellings), and 100,000 matches. Missing and Null contribute no bytes; empty Text contributes zero bytes and still participates in zero-width regex matches. Sparse all-column search visits only stored entries in schema order; a scoped search reads only the selected column in each row. Dense CSV/TSV rows retain contiguous iteration.
 Exceeding a bound returns an error with no partial result count. The regex engine
 avoids catastrophic backtracking. Narrow the term/scope when a limit is reached.
-Raising those bounds, returning a partial list, or moving the scan off the calling
-thread is engine follow-up [issue #9](https://github.com/crizant/rowtation/issues/9),
-not an import cap.
+These remain search limits, not import caps.
 The retained match list stays in Rust. Finding the same occurrence again is one
 lookup, and navigation transfers that match plus a bounded snippet, not the whole cell. After a new query the UI reveals
 the first match. After replace, replace all, undo, redo, or a scope/case/regex
 change it keeps the same occurrence when that byte range still matches, and
 otherwise keeps the same index clamped to the new list. The counter and the grid
 selection both follow that choice. An empty query has no count; a search in
-flight says “Searching…”; no hits say “No matches”; an error shows the message
+flight says “Searching…” with row progress after its first slice; no hits say “No matches”; an error shows the message
 and no count. Multiple occurrences in a cell are separate results. Matching
 cells are tinted. The active occurrence is marked in the preview, or named in
 the find bar when its bytes sit past the 512-byte preview. Cmd/Ctrl+F focuses
@@ -95,9 +94,21 @@ and serialization round trips as well as values. Export does not reset the impor
 replacing a modified document still asks first after export. Confirming discards the changes and releases the session.
 An unmodified document closes immediately. See [structured import type and reconstruction rules](structured-imports.md).
 
-Search and sort run synchronously on the calling thread, including in the browser,
-so a large query blocks the tab until it returns. The limits above are search
-limits only. Import has no size cap.
+The browser uses `startSearch`, then `searchStep` in separate event-loop tasks.
+Rust retains a row/stored-cell/occurrence cursor and targets 8 ms per slice,
+checking its clock every 64 work units. It resumes without copying the dataset,
+recompiling the query, rescanning completed cells, or rebuilding the match list.
+The highlight index is also built in slices. Results become available atomically
+only after the full scan and index complete. Navigation and replacement are
+disabled while pending. Cancel search, query/options changes, closing Find, and
+document disposal abandon unfinished work; sorting and successful mutations
+also invalidate it in Rust. A cancelled search shows “Search cancelled”.
+
+A single regex engine call and compilation are indivisible: an unusually long
+cell or expensive regex may exceed the slice target. Haystacks are never cut into
+independent chunks, which would change anchors, boundaries and greedy matches.
+There is no new cell or dataset size limit. The synchronous `search` API remains
+for native controls and existing callers. See [search measurements](search-performance.md).
 
 `ROWTATION_BENCH_ROWS=2000000 cargo test --release --test stress -- --ignored benchmark_engine --nocapture`
 measures a generated CSV. One release run on 8 Nov 2026 loaded 2,000,000 rows

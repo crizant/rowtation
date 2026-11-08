@@ -507,3 +507,27 @@ test("a pending search does not step the previous matches", async () => {
   await clock.runFor(200);
   await app.waitFor("No matches");
 });
+
+
+test("cancelled Find work cannot publish stale matches after query changes or close", async () => {
+  const app = await open("./App.tsx", { width: 390, height: 844, clock: {}, clipboard: "value\n" + "old value\n".repeat(20_000) + "target" });
+  await app.press("Paste from clipboard"); await app.press("Review import"); await app.press("Import document");
+  await app.waitFor("20,001 rows · 1 column");
+  const clock = app.clock;
+  if (!clock) throw new Error("expected a manual clock");
+  await app.press("Find"); await app.paste("find-input", { text: "old" });
+  await app.press("Cancel search");
+  await clock.runFor(500);
+  await app.waitFor("Search cancelled");
+  expect(app.count("id:search-highlight")).toBe(0);
+  await app.clear("find-input"); await app.paste("find-input", { text: "target" });
+  await clock.runFor(500);
+  await app.waitFor("1 of 1 matches");
+  await app.clear("find-input"); await app.paste("find-input", { text: "old" });
+  await app.press("Close find");
+  await clock.runFor(500);
+  expect(app.count("id:search-highlight")).toBe(0);
+  await app.press("close-document");
+  await clock.runFor(500);
+  expect(app.texts()).toContain("Rowtation");
+});

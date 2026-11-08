@@ -1,7 +1,8 @@
 //! NSH transport records contain only requested snapshots; the session owns Rust data.
 use crate::inspection::{ColumnProfile, ProfileJob, ProfileProgress};
 use crate::operations::{
-    EditStatus, MutationResult, Operations, SearchMatch, SearchOptions, SearchResult,
+    EditStatus, MutationResult, Operations, SearchMatch, SearchOptions, SearchProgress,
+    SearchResult,
 };
 use crate::{
     diagnostics::now_ms,
@@ -350,10 +351,21 @@ impl DocumentSession {
     }
     /// Search literal text or bounded Rust regex; retains identities in Rust.
     pub fn search(&mut self, options: SearchOptions) -> Result<SearchResult, EngineError> {
-        if self.operations.order.len() != self.document.row_count() {
-            self.operations.sort(&self.document, None, false)?;
-        }
         self.operations.search(&self.document, options)
+    }
+    /// Start a new cooperative search, discarding previous matches and work.
+    /// Use searchStep between event-loop turns until result is present.
+    pub fn start_search(&mut self, options: SearchOptions) -> Result<(), EngineError> {
+        self.operations.start_search(&self.document, options)
+    }
+    /// Scan for about 8 ms, then return progress without publishing partial hits.
+    /// A regex search within one cell is indivisible and can exceed this budget.
+    pub fn search_step(&mut self) -> Result<SearchProgress, EngineError> {
+        self.operations.search_step(&self.document, 8.0)
+    }
+    /// Release unfinished work and all retained matches immediately.
+    pub fn cancel_search(&mut self) {
+        self.operations.cancel_search();
     }
     /// Return one match, without transferring the dataset or match list.
     pub fn search_match(&self, index: u32) -> Option<SearchMatch> {

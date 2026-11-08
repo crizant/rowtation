@@ -66,6 +66,8 @@ function DocumentView(props: { document: OpenDocument; onClose: () => void }) {
   const activeSnippet = signal("");
   const querySelection = signal<{ start: number; end: number } | undefined>(undefined);
   const pending = signal(false);
+  const searchProgress = signal<number | null>(null);
+  const searchCancelled = signal(false);
   const operationError = signal("");
   const notice = signal("");
   const exporting = signal(false);
@@ -76,10 +78,11 @@ function DocumentView(props: { document: OpenDocument; onClose: () => void }) {
   let selectQuery = false;
   let searchTimer: ReturnType<typeof setTimeout> | undefined;
   let focusTimer: ReturnType<typeof setTimeout> | undefined;
+  let searchGeneration = 0;
   let appliedKey = "";
   let held: { rowId: number; columnId: number; start: number } | null = null;
   let heldIndex = 0;
-  cleanup(() => { clearTimeout(searchTimer); clearTimeout(focusTimer); });
+  cleanup(() => { searchGeneration++; clearTimeout(searchTimer); clearTimeout(focusTimer); });
   const selection = signal<CellSelection | null>(null);
   const column = signal<ColumnMetadata | null>(null);
   const profile = signal<ColumnProfile | null>(null);
@@ -185,43 +188,76 @@ function DocumentView(props: { document: OpenDocument; onClose: () => void }) {
     return match;
   }
   function runSearch(reveal = true, mode: "preserve" | "restart" = "preserve") {
-    clearTimeout(searchTimer);
-    searchTimer = undefined;
-    pending.set(false);
+    cancelSearch();
+    const generation = searchGeneration;
     const activeTerm = finding() ? term() : "";
+    const key = queryKey();
+    const began = performance.now();
+    let slices = 0, longest = 0, blocked = 0;
+    function fail(cause: unknown) {
+      pending.set(false);
+      appliedKey = key;
+      operationError.set(cause instanceof Error ? cause.message : String(cause));
+      if (mode === "restart") { held = null; heldIndex = 0; }
+    }
+    const step = () => {
+      if (generation !== searchGeneration) return;
+      searchTimer = undefined;
+      try {
+        const started = performance.now();
+        const progress = props.document.session.searchStep();
+        const elapsed = performance.now() - started;
+        slices++; blocked += elapsed; longest = Math.max(longest, elapsed);
+        if (!progress.result) {
+          searchProgress.set(progress.total ? progress.scanned / progress.total : 0);
+          searchTimer = setTimeout(step, 0);
+          return;
+        }
+        const result = progress.result;
+        pending.set(false);
+        appliedKey = key;
+        operationError.set("");
+        results.set(result);
+        if (!result.count) {
+          if (mode === "restart" || !activeTerm) { held = null; heldIndex = 0; }
+        } else if (reveal) revealMatch(mode === "restart" ? 0 : resolveIndex(result.count));
+        else {
+          const index = mode === "restart" ? 0 : resolveIndex(result.count);
+          if (remember(index)) showSnippet(index);
+        }
+        version.set(version() + 1);
+        if (activeTerm) record("Search", performance.now() - began, `${slices} slices, longest ${longest.toFixed(1)} ms, scanning ${blocked.toFixed(1)} ms`);
+      } catch (cause) { fail(cause); }
+    };
     try {
-      const result = props.document.session.search({
+      props.document.session.startSearch({
         term: activeTerm,
         columnId: activeTerm && scoped() ? scopeId() : null,
-        caseSensitive: sensitive(),
-        regex: regex(),
+        caseSensitive: sensitive(), regex: regex(),
       });
-      appliedKey = queryKey();
-      operationError.set("");
-      results.set(result);
-      if (!result.count) {
-        matchIndex.set(0);
-        activeMatch.set(null);
-        activeSnippet.set("");
-        if (mode === "restart" || !activeTerm) { held = null; heldIndex = 0; }
-      } else if (reveal) revealMatch(mode === "restart" ? 0 : resolveIndex(result.count));
-      else {
-        const index = mode === "restart" ? 0 : resolveIndex(result.count);
-        if (remember(index)) showSnippet(index);
-      }
-    } catch (cause) {
-      results.set({ count: 0, current: null });
-      matchIndex.set(0);
-      activeMatch.set(null);
-      activeSnippet.set("");
-      if (mode === "restart") { held = null; heldIndex = 0; }
-      appliedKey = queryKey();
-      operationError.set(cause instanceof Error ? cause.message : String(cause));
-    }
+      pending.set(!!activeTerm);
+      // Give input and rendering an event-loop turn before beginning the scan.
+      if (activeTerm) searchTimer = setTimeout(step, 0);
+      else step();
+    } catch (cause) { fail(cause); }
+  }
+  function cancelSearch() {
+    searchGeneration++;
+    appliedKey = "";
+    clearTimeout(searchTimer);
+    searchTimer = undefined;
+    props.document.session.cancelSearch();
+    pending.set(false);
+    searchProgress.set(null);
+    searchCancelled.set(false);
+    results.set({ count: 0, current: null });
+    matchIndex.set(0);
+    activeMatch.set(null);
+    activeSnippet.set("");
     version.set(version() + 1);
   }
   function queueSearch() {
-    clearTimeout(searchTimer);
+    cancelSearch();
     pending.set(true);
     operationError.set("");
     searchTimer = setTimeout(() => { searchTimer = undefined; attempt(() => runSearch(true, "restart")); }, 180);
@@ -243,7 +279,8 @@ function DocumentView(props: { document: OpenDocument; onClose: () => void }) {
   }
   function searchStatus() {
     if (!term()) return "";
-    if (pending()) return "Searching…";
+    if (pending()) return searchProgress() == null ? "Searching…" : `Searching… ${Math.floor(searchProgress()! * 100)}%`;
+    if (searchCancelled()) return "Search cancelled";
     if (operationError()) return "";
     if (!results().count) return "No matches";
     return `${matchIndex() + 1} of ${results().count} matches`;
@@ -362,7 +399,8 @@ function DocumentView(props: { document: OpenDocument; onClose: () => void }) {
   function clearCell() { attempt(() => { const cell = selection(); if (cell) { props.document.session.editCell(cell.rowId, cell.columnId, "", metadata().revision); refresh(); } }); }
   function replace(all: boolean) {
     attempt(() => {
-      if (searchTimer || queryKey() !== appliedKey) runSearch(true, "restart");
+      if (pending()) return;
+      if (queryKey() !== appliedKey) { runSearch(true, "restart"); return; }
       if (!results().count || operationError()) return;
       const result = props.document.session.replaceMatches(all ? null : matchIndex(), replacement(), metadata().revision);
       refresh(); notice.set(`${count(result.replacements, "replacement", "replacements")} in ${count(result.affectedCells, "cell", "cells")}`);
@@ -421,8 +459,9 @@ function DocumentView(props: { document: OpenDocument; onClose: () => void }) {
             <Button label="Next" icon="caret-right" quiet compact={wide()} disabled={pending() || !results().count} onPress={() => stepMatch(1)} />
           </View>
           <View class="flex-row flex-wrap items-center gap-2">
-            <Text testID="search-count" class={(wide() ? "shrink-0" : "min-w-0 flex-1") + " line-clamp-1 text-xs text-muted-foreground"}>{searchStatus()}</Text>
+            <Text testID="search-count" class={(wide() ? "shrink-0" : "min-w-32 flex-1") + " line-clamp-1 text-xs text-muted-foreground"}>{searchStatus()}</Text>
             <If when={activeSnippet()}><Text testID="active-match" class="max-w-36 line-clamp-1 text-xs font-medium text-foreground underline" style={{ textDecorationLine: "underline" }}>{activeSnippet()}</Text></If>
+            <If when={pending()}><Button label="Cancel search" quiet compact={wide()} onPress={() => { cancelSearch(); searchCancelled.set(true); }} /></If>
             <Button label="Aa" accessibilityLabel="Case sensitive" tight quiet compact={wide()} selected={sensitive()} tooltip="Case sensitive" onPress={() => toggleOption("case")} />
             <Button label=".*" accessibilityLabel="Regex" tight quiet compact={wide()} selected={regex()} tooltip="Regex" onPress={() => toggleOption("regex")} />
             <Button label={scopeLabel()} accessibilityLabel={scoped() ? "Selected column" : "All columns"} tight quiet compact={wide()} selected={scoped()} disabled={!column() && !scoped()} tooltip={scoped() ? "Selected column" : "All columns"} onPress={() => toggleOption("scope")} />
@@ -433,8 +472,8 @@ function DocumentView(props: { document: OpenDocument; onClose: () => void }) {
           <View class={wide() ? "flex-row items-center gap-2" : "gap-2"}>
             <View class="min-w-0 flex-1"><Input label="Replace with" placeholder="Replace with" testID="replace-input" value={replacement()} onChange={value => replacement.set(value)} /></View>
             <View class="flex-row items-center gap-2">
-              <Button label="Replace" quiet compact={wide()} disabled={!results().count || !!operationError()} onPress={() => replace(false)} />
-              <Button label="Replace all" compact={wide()} disabled={!results().count || !!operationError()} onPress={() => replace(true)} />
+              <Button label="Replace" quiet compact={wide()} disabled={pending() || !results().count || !!operationError()} onPress={() => replace(false)} />
+              <Button label="Replace all" compact={wide()} disabled={pending() || !results().count || !!operationError()} onPress={() => replace(true)} />
             </View>
           </View>
         </If>

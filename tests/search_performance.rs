@@ -85,3 +85,38 @@ fn delimited_search_control() {
         }
     }
 }
+
+#[test]
+#[ignore = "40 MiB sliced search benchmark; run in release"]
+fn large_time_sliced_search() {
+    let input = format!("value\n{}", format!("{}\n", "x".repeat(80)).repeat(500_000));
+    let mut s = DocumentSession::new(input.into_bytes(), ImportOptions::default()).unwrap();
+    for _ in 0..5 {
+        measure(&mut s, "40 MB all absent synchronous", "absent", None, 0);
+        let began = Instant::now();
+        s.start_search(SearchOptions {
+            term: "absent".into(),
+            ..Default::default()
+        })
+        .unwrap();
+        let mut slices = 0;
+        let mut longest = 0.0_f64;
+        let mut scanning = 0.0;
+        loop {
+            let start = Instant::now();
+            let progress = s.search_step().unwrap();
+            let elapsed = start.elapsed().as_secs_f64() * 1000.0;
+            longest = longest.max(elapsed);
+            scanning += elapsed;
+            slices += 1;
+            if let Some(result) = progress.result {
+                assert_eq!(result.count, 0);
+                break;
+            }
+        }
+        println!(
+            "40 MB all absent sliced: {:.3} ms total, {scanning:.3} ms scanning, {slices} slices, longest {longest:.3} ms",
+            began.elapsed().as_secs_f64() * 1000.0
+        );
+    }
+}
