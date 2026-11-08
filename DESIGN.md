@@ -27,8 +27,8 @@ reduce opacity and suppress interaction. No motion is needed for this starter.
 ## Inspection workflow
 
 Make import → inspect the primary workflow. Keep the virtualized table at the
-center, with a compact toolbar for opening another document. Keep headers and
-selected-cell identity stable under scrolling. Sort from the column header.
+center. Back in the document toolbar returns home so another file can be imported.
+Keep headers and selected-cell identity stable under scrolling. Sort from the column header.
 Find, undo, and redo stay in the document toolbar. Export… opens a compact five-format dialog. Closing or replacing a modified
 document still asks before the changes are dropped, even after export.
 
@@ -46,10 +46,10 @@ and a grouped action list. Show CSV, TSV, JSON, NDJSON and XML as supported; the
 history. The privacy note is concise and mentions large-file confirmation.
 
 The document toolbar contains a labeled back action, the filename, and a
-"CSV · UTF-8" badge, then Find, Undo, Redo, and a More menu. Below 900 points
+"CSV · UTF-8" badge, then Find, Undo, Redo, and Export… on desktop. Below 900 points
 the format sits on a second line under the filename so the name keeps the
-width. Import… lives in the menu. Column info, Import… and Export… sit in an
-action bar below the grid, never floating over rows.
+width. Use Back to close the document and return home to import another file.
+Column info and Export… sit in an action bar below the grid, never floating over rows.
 The table owns its scrolling region. Keep the status bar outside it and prevent
 horizontal page overflow. On desktop, an independent scrolling inspector sits in
 a stationary rounded frame. Below 900 points it opens contextually; never squeeze

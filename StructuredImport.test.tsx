@@ -30,18 +30,20 @@ test("NDJSON line errors can be corrected and format choice stays available", as
   await app.waitFor("2 rows · 2 columns"); await app.waitFor("NDJSON · UTF-8");
 });
 
-test("XML review imports attributes and repeats; unsafe replacement preserves edited data", async () => {
+test("XML edits survive cancelled Back and invalid input can be reviewed from home", async () => {
   const app = await open("./App.tsx", { width: 1280, height: 800, clipboard: '<rows><row id="001"><tag>first</tag><tag>second</tag></row></rows>' });
   await app.press("Paste from clipboard"); await app.press("Review import");
   expect(app.texts()).not.toContain("First row contains column headers");
   await app.press("Import document"); await app.waitFor("1 row · 3 columns"); await app.waitFor("XML · UTF-8");
   await app.press("first"); await app.keyboard.press("f2"); await app.clear("cell-draft"); await app.paste("cell-draft", { text: "edited" }); await app.press("Save cell");
-  app.onDialog(() => "Discard changes");
-  await app.press("More"); await app.press("Import…"); await app.clear("paste-input");
+  app.onDialog(() => "Keep editing");
+  await app.press("close-document"); await app.waitFor("edited");
+  await app.press("Undo"); await app.waitFor("Unmodified");
+  await app.press("close-document"); await app.press("Paste from clipboard"); await app.clear("paste-input");
   await app.paste("paste-input", { text: '<!DOCTYPE rows><rows/>' }); await app.press("Review import"); await app.press("Import document");
   expect(app.texts().join("\n")).toContain("INVALID_XML");
-  await app.press("Cancel"); await app.waitFor("edited"); await app.waitFor("1 modified · Unsaved");
-  await app.press("Undo"); await app.waitFor("Unmodified");
+  await app.press("Cancel"); await app.waitFor("Rowtation");
+  expect(app.texts()).not.toContain("edited");
 });
 
 test("ambiguous paste can be explicitly treated as structured or delimited", async () => {
@@ -81,14 +83,16 @@ test("malformed structured paste remains unparsed until Import", async () => {
   await app.press("Cancel"); await app.waitFor("Rowtation");
 });
 
-test("canceling a prepared candidate preserves the active document and undo", async () => {
+test("Back returns home before reviewing and cancelling another structured dataset", async () => {
   const app = await open("./App.tsx", { width: 1280, height: 800, clipboard: '{"name":"Mia"}' });
   await app.press("Paste from clipboard"); await app.press("Review import"); await app.press("Import document");
   await app.waitFor("1 row · 1 column"); await app.press("Mia"); await app.keyboard.press("f2");
   await app.clear("cell-draft"); await app.paste("cell-draft", {text: "edited"}); await app.press("Save cell");
   app.onDialog(() => "Discard changes");
-  await app.press("More"); await app.press("Import…"); await app.clear("paste-input");
+  await app.press("close-document"); await app.waitFor("Rowtation");
+  await app.press("Paste from clipboard"); await app.clear("paste-input");
   await app.paste("paste-input", {text: Array.from({length: 513}, (_, i) => `{"f${i}":${i}}`).join("\n")});
   await app.press("Review import"); await app.press("Import document"); await app.waitFor("This is a large dataset");
-  await app.press("Cancel"); await app.waitFor("edited"); await app.press("Undo"); await app.waitFor("Unmodified");
+  await app.press("Cancel"); await app.waitFor("Rowtation");
+  expect(app.texts()).not.toContain("edited");
 });
