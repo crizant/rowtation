@@ -68,7 +68,7 @@ includes a base 20-point inset plus the browser safe area.
 
 Show implemented search, replace, sorting, editing, undo and modification counts.
 Use the shared dialog for export, with format cards, contextual options, mapping
-warnings and Copy/Cancel/Download actions. Keep the body scrollable and the
+warnings, with Copy at the far left of the footer and Cancel and Download at the right. Keep the body scrollable and the
 actions visible on mobile. Do not draw fake window controls. CSV/TSV values get Text indicators; numeric/date inference would
 misrepresent the engine. An inspector distinguishes empty text, Null and Missing and reports canonical type counts. Structured format settings follow docs/structured-imports.md.
 

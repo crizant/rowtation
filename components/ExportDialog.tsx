@@ -37,8 +37,9 @@ export function ExportDialog(props: { session: DocumentSession; name: string; on
   }
   return <Dialog title={`Export ${metadata.rowCount.toLocaleString()} ${metadata.rowCount === 1 ? "row" : "rows"}`}
     description="Choose a format and download or copy the full document." onClose={() => { if (!busy()) props.onClose(); }}
-    footer={<View class="flex-row flex-wrap justify-end gap-2">
+    footer={<View class="flex-row flex-wrap items-center gap-2">
       <Button label="Copy" quiet disabled={busy() || (!!warning() && !accepted())} onPress={() => void perform(true)} />
+      <View class="flex-1" />
       <Button label="Cancel" quiet disabled={busy()} onPress={() => props.onClose()} />
       <Button fullWidth={windowSize().width < 640} label={busy() ? "Exporting…" : "Download"} disabled={busy() || !filename().trim() || (!!warning() && !accepted())} onPress={() => void perform(false)} />
     </View>}>
