@@ -182,11 +182,16 @@ fn sliced_profiles_match_whole_profiles_and_restart_on_another_column() {
 
 #[test]
 fn common_values_rank_by_count_then_text_in_any_table_order() {
-    let rank = |values: &[String]| {
+    let rank = |values: &[String], slice: u32| {
         let input = format!("value\n{}\n", values.join("\n"));
         let mut session =
             DocumentSession::new(input.into_bytes(), ImportOptions::default()).unwrap();
-        let profile = session.profile(session.columns()[0].id).unwrap();
+        let id = session.columns()[0].id;
+        let profile = loop {
+            if let Some(profile) = session.profile_step(id, slice).unwrap().profile {
+                break profile;
+            }
+        };
         profile
             .common_values
             .into_iter()
@@ -197,16 +202,19 @@ fn common_values_rank_by_count_then_text_in_any_table_order() {
     // Ties order by UTF-8 text; empty text never ranks.
     let tied = owned(&["雪", "b", "", "", "", "🦀", "a", "é", "a", "雪"]);
     assert_eq!(
-        rank(&tied),
+        rank(&tied, 1),
         [("a", 2), ("雪", 2), ("b", 1), ("é", 1), ("🦀", 1)].map(|(v, c)| (v.to_owned(), c))
     );
     let mut reversed = tied.clone();
     reversed.reverse();
-    assert_eq!(rank(&reversed), rank(&tied));
+    assert_eq!(rank(&reversed, 3), rank(&tied, u32::MAX));
 
     // Many distinct values: compare with a full sort.
     let values: Vec<String> = (0..20_000u32)
-        .map(|i| format!("v{}", (i.wrapping_mul(7919) % 4999) % (1 + i % 97)))
+        .rev()
+        .map(|i| format!("v{i:05}"))
+        // Previously discarded values must enter the leaders as their counts rise.
+        .chain((0..600u32).map(|i| format!("v{:05}", 19_000 + (i.wrapping_mul(7919) % 97))))
         .collect();
     let mut counts = std::collections::HashMap::<&str, u32>::new();
     for value in &values {
@@ -216,7 +224,9 @@ fn common_values_rank_by_count_then_text_in_any_table_order() {
         counts.into_iter().map(|(v, c)| (v.to_owned(), c)).collect();
     expected.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
     expected.truncate(5);
-    assert_eq!(rank(&values), expected);
+    for slice in [1, 137, u32::MAX] {
+        assert_eq!(rank(&values, slice), expected);
+    }
 }
 
 #[test]
