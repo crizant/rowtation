@@ -26,7 +26,7 @@ test("failed import preserves the document and successful import replaces it", a
   await app.paste("paste-input", { text: '\n"unclosed' });
   await app.press("Review import");
   await app.press("Import document");
-  await app.waitFor("text:Check the separator and quoted fields, or choose another file. Your current document is unchanged.");
+  await app.waitFor("text:Correct the input or choose another format or file. Your current document is unchanged.");
   await app.press("Cancel");
   expect(app.texts()).toContain("Original");
   await app.press("Import…");

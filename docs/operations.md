@@ -3,13 +3,13 @@
 All values, view ordering, matching, transactions and column statistics live in
 Rust/WASM. The UI retains bounded row previews and transient drafts. Operations
 are synchronous on the browser thread; search input is debounced, not moved to a
-worker. No recent history, persistence, other format or download UI is added.
+worker. No recent history, persistence, download UI is added.
 
 ## Sorting
 
 Ascending sorts by canonical type: Number, Boolean, nonempty Text, empty Text,
 Null, Missing. Descending reverses that order, including the empty ranks. Numbers
-compare as arbitrary-precision decimals; equal numeric values retain imported row
+compare as arbitrary-precision decimals, with keys parsed once per numeric cell per sort; equal numeric values retain imported row
 order. Invalid future numeric lexical forms sort after valid numbers and compare lexically.
 Booleans sort false before true. Text uses case-sensitive UTF-8 lexical order.
 CSV/TSV imports contain Text only: `001`, `10`, `2` remain text and sort in that
@@ -24,8 +24,7 @@ Search visits all rows in current view order, then schema columns, then matches
 left to right within a cell. It does not filter rows. Scope is all columns, or
 the column selected when the find bar’s column control is pressed; later
 navigation does not move that scope. Hidden columns participate only in the
-all-columns scope. Headers, missing/null fields and booleans are not
-searched. Text and future canonical numbers are searchable.
+all-columns scope. Headers and missing/null fields are not searched. Text, exact numeric tokens and boolean spellings are searchable.
 
 Literal search escapes all regex metacharacters. Case-insensitive matching uses
 the regex crate's Unicode simple case folding, without normalization, locale
@@ -38,7 +37,7 @@ Empty search terms return zero matches, including in regex mode. Invalid regex
 produces an inline error and clears old results.
 
 Search is bounded to 4096 pattern bytes, a 1 MiB compiled regex size and DFA cache,
-64 MiB of scoped cell payload (every empty/absent scoped cell counts as one byte), and 100,000 matches.
+64 MiB of actual searchable UTF-8 payload (Text, numeric tokens and boolean spellings), and 100,000 matches. Missing and Null contribute no bytes; empty Text contributes zero bytes and still participates in zero-width regex matches. Sparse all-column search visits only stored entries in schema order; a scoped search reads only the selected column in each row. Dense CSV/TSV rows retain contiguous iteration.
 Exceeding a bound returns an error with no partial result count. The regex engine
 avoids catastrophic backtracking. Narrow the term/scope when a limit is reached.
 Raising those bounds, returning a partial list, or moving the scan off the calling
@@ -63,8 +62,7 @@ one occurrence; “Replace all” changes precisely the retained search scope in
 transaction. Ranges are applied in a single forward pass per cell. Counts report
 matched occurrences and cells whose final values actually differ. Replacing text
 with itself counts occurrences but creates no revision/history/dirty change.
-Numbers replaced in a future typed document become literal Text; current CSV/TSV
-values already are Text. No formulas, markup or code are evaluated.
+Changed numbers and booleans become literal Text; replacements producing the same spelling preserve their type. CSV/TSV values already are Text. No formulas, markup or code are evaluated.
 
 ## Editing, consistency and history
 
@@ -96,7 +94,7 @@ and serialization round trips as well as values. There is no save/export workflo
 “Unsaved” means the active in-memory document differs from import. Closing or
 replacing a modified document asks first and says that Rowtation cannot export
 or download it yet. Confirming discards the changes and releases the session.
-An unmodified document closes immediately.
+An unmodified document closes immediately. See [structured import type and reconstruction rules](structured-imports.md).
 
 Search and sort run synchronously on the calling thread, including in the browser,
 so a large query blocks the tab until it returns. The limits above are search

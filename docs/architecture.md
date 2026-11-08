@@ -10,7 +10,7 @@ Rust owns the document, all format parsing/serialization and resource validation
 TSX owns presentation and transient focus, selection, dialogs and editing drafts.
 Returned snapshots may be mirrored in UI signals; they are not a second dataset.
 The import UI, virtualized inspection table and Rust data operations are implemented.
-Other format adapters and browser downloads remain planned.
+JSON, NDJSON and tabular XML adapters are implemented; Excel and browser downloads remain planned. See [structured mapping and reconstruction metadata](structured-imports.md).
 
 See the [data operations contract](operations.md) for ordering, matching,
 revisions, dirty state, mutation methods and resource limits.
@@ -42,21 +42,20 @@ No JSON-string protocol or separate WASM bridge is used.
 
 `CellValue` is `Missing | Null | Text(String) | Boolean(bool) | Number(String)`.
 Numbers store exact lexical text to avoid floating-point precision loss. CSV only
-creates Text; it never infers scalars or evaluates formulas/scripts/markup. Future
-JSON/NDJSON/XML/Excel adapters can add mapping rules and composite values without
+creates Text; it never infers scalars or evaluates formulas/scripts/markup. Structured adapters add per-row shape metadata referencing leaf column IDs without
 changing document ownership or cell identity. No adapter registry is introduced.
 
 Columns have stable IDs, names and optional original header names. Empty and
 duplicate headers are preserved. Absent headers and extra fields generate names.
-Rows store only their present fields: an empty string is Text(""), while an absent
-trailing field reads as Missing. Null is a distinct canonical value reserved for
-future adapters. Ragged rows extend the schema; nothing is dropped or padded into
+CSV/TSV rows retain contiguous field vectors. Structured rows use sorted sparse
+(column index, value) vectors containing only present leaves. An empty string is
+Text(""), while an absent field reads as Missing. Null is a distinct canonical value produced by JSON and NDJSON. Ragged rows extend the schema; nothing is dropped or padded into
 empty strings. Blank records are one empty text field. Empty input is zero-by-zero.
 
 Document IDs are runtime-unique strings, not persisted IDs. Row and column IDs are
 opaque `u32` identities scoped to a document. The session supplies document context;
 UI keys and selection must retain document ID as well as row/column IDs. Backing storage assigns monotonically increasing IDs and never reorders
-rows. Sorting orders row identities in a Rust view. Reads are O(1) by ID.
+rows. Sorting orders row identities in a Rust view. Row lookup is O(1) by ID; cell lookup is O(1) for delimited rows and O(log present fields) for structured rows.
 
 Imported documents start clean at revision zero. Reads, sorting, search and export
 do not change either. Mutations update revision/dirty in Rust; a UI generation
@@ -102,13 +101,15 @@ const output = session.serialize({ delimiter: ",", headers: true });
 
 | API | Contract |
 | --- | --- |
-| `new DocumentSession(input: Uint8Array, options: ImportOptions)` | Atomic import; options `{ delimiter?: string, headers?: boolean }`, defaults comma/true. Failed creation does not affect another session. |
+| `new DocumentSession(input: Uint8Array, options: ImportOptions)` | Atomic import; options `{ format?: string, delimiter?: string, headers?: boolean }`, defaults comma/true. Failed creation does not affect another session. |
 | `DocumentSession.fromSource(source: ImportSource, options)` | Same import from Rust-held bytes, without copying them through JS. The source is kept, so a failed import can be retried. |
 | `ImportSource.fromText(text, name)`, `source.inspect()`, `source.name`, `source.byteLength` | Bytes of one import candidate held in Rust. `inspect` equals `ImportDetector.inspect`. Dispose when review ends. |
 | `BrowserImport.take(requestId)` / `readDeferred(requestId)` | Take the `ImportSource` a delivered `LocalImport` read, once; or read a file delivered with `deferred: true` (above 8 MiB, unread) after confirmation. `cancelPending()` drops both and stops a read at its next 16 MiB slice. |
+| `source.inspectFormat(format): ImportSize` | Byte-size review for structured formats; `dimensionsKnown: false`, no dataset parsing or allocation. |
+| `session.importSize(byteLength): ImportSize` | Exact warning dimensions of the already-parsed candidate, without reparsing or copying rows. |
 | `profileStep(columnId, rows): ProfileProgress` | Count up to `rows` more rows of a column's exact statistics; `profile` is set when done. `profile(columnId)` runs to completion. |
 | `cancelProfile(): void` | Drop an unfinished `profileStep` scan and its distinct-value table; finished profiles stay cached. The view calls it when the selected column changes, and disposal frees it too. |
-| `metadata(): DocumentMetadata` | `{ id, rowCount, columnCount, revision, dirty, delimiter, headers }`; no row copies. |
+| `metadata(): DocumentMetadata` | `{ id, format, rowCount, columnCount, revision, dirty, delimiter, headers }`; no row copies. |
 | `columns(): ColumnMetadata[]` | Ordered `{ id, name, originalName }`; originalName is null for generated columns. |
 | `rows({ offset, limit, columnOffset?, columnLimit?, previewBytes?, measure? }): RowsSnapshot` | `{ documentId, revision, offset, columnOffset, rows: [{ id, cells }], rustMs }`; `rustMs` is set only when `measure` is true: Rust's own build time, excluding the copy into JS; cells follow schema order from columnOffset, including missing trailing values. Without previewBytes whole text/number values are copied; with it each value is cut to that many UTF-8 bytes on a character boundary and marked `truncated`. `byteLength` is always the whole length. `matched` marks cells in the active search. At most 256 rows; offsets are positions, not IDs. |
 | `readCell(rowId: number, columnId: number): CellSnapshot` | Full value using document-scoped IDs obtained from `rows()`/`columns()`. `{ kind, text, boolean, number, byteLength, truncated, matched }` (never truncated). Only the payload for kind is populated, others null. `kind` is `missing`, `null`, `text`, `boolean` or `number`. |
@@ -162,7 +163,7 @@ message starts with `CODE:`. This version does **not** attach a structured JS
 `error.code`; consumers may match the prefix. Binding argument errors and use after
 disposal are NSH TypeErrors, distinct from engine errors.
 
-Codes: INVALID_DELIMITER, INVALID_UTF8, INVALID_CSV, INVALID_WINDOW, UNKNOWN_ROW,
+Codes: INVALID_FORMAT, INVALID_JSON, INVALID_XML, INVALID_STRUCTURE, INVALID_DELIMITER, INVALID_UTF8, INVALID_CSV, INVALID_WINDOW, UNKNOWN_ROW,
 UNKNOWN_COLUMN, LOSSY_EXPORT, SERIALIZE_FAILED, ID_EXHAUSTED, INVALID_REGEX,
 SEARCH_LIMIT, EDIT_LIMIT, STALE_REVISION, UNKNOWN_MATCH and REVISION_LIMIT. Failed operations
 return no partial dataset/output and do not change a live document. No untrusted
@@ -176,7 +177,7 @@ offset equal to rowCount and zero limits are valid empty windows. Larger offsets
 or limits fail with INVALID_WINDOW. Memory exhaustion is not a recoverable engine
 error: a WASM allocation failure aborts the module, and the browser may close the tab.
 
-`ImportDetector.inspect` measures the whole input before import and reports, for
+`ImportDetector.inspect` measures the whole delimited input before import and reports, for
 comma and tab separately, records, widest record, total fields, the longest raw
 field and a `large` flag. The flag is set above 8 MiB of input, 100,000 records,
 512 columns, 1,000,000 fields or a 1 MiB field (`inspection::LARGE_*`). The review
@@ -209,7 +210,7 @@ Verify `cargo fmt --check`, `nsh check`, `nsh build`, `nsh test`,
 package verifies the in-memory csv dependency path compiles to wasm32; browser
 smoke tests verify runtime compatibility. The large-input thresholds are not
 large-file responsiveness benchmarks. Measure representative browsers before
-adding workers. Structured-format mapping and safe download policy remain later work. Browser file and layout regressions run through the synthetic host
+adding workers. Safe download policy and structured export remain later work. Browser file and layout regressions run through the synthetic host
 used by scripts/test-browser-files.sh.
 
 ## Import and inspection UI
@@ -223,8 +224,7 @@ idempotent so root disposal and view disposal cannot free it twice.
 `ImportSource.inspect()` (or `ImportDetector.inspect(bytes, filename)`) scans up to 32 logical records, counting
 commas/tabs outside quoted text. The filename breaks ties only. Mixed separators
 or no separators are marked ambiguous. It validates UTF-8 and measures the whole
-input for the large-import warning; the existing strict parser validates the complete file on import. The review step
-always exposes comma/tab and the header toggle. No scalar or header inference is
+input for the large-import warning; the existing strict parser validates the complete file on import. Structured review reads only a bounded detection prefix and byte metadata, parsing once after Import; see structured-imports.md. The review step exposes a format selector; comma/tab and the header toggle appear only for delimited input. No scalar or header inference is
 added. A failed constructor leaves the old session untouched.
 
 `BrowserImport.onFile(callback, onDrag)` owns a hidden local file input and document
@@ -236,8 +236,7 @@ when a queued callback arrives. Rejected files clear obsolete review drafts and
 report the failing filename; parser errors keep only the named current draft so
 its separator/header options can be corrected. `pick()` clicks that
 input synchronously in the user's press. Bytes are read through browser File APIs
-in Rust/WASM without a size cap. Only one
-.csv/.tsv file is accepted. These APIs use registered NSH modules and generated
+in Rust/WASM without a size cap. Only one supported CSV/TSV, JSON, NDJSON/JSONL or XML file is accepted. These APIs use registered NSH modules and generated
 interfaces. Target-specific web-sys/wasm-bindgen dependencies add no native target.
 
 `components/DataGrid.tsx` styles NSH's DataTable. It supplies `rowCount`, `dataStart`
@@ -256,7 +255,7 @@ missing fields are excluded from distinct counts. Frequency maps borrow the
 stored strings and are dropped after computation. The session caches at most
 eight small summaries and recomputes an evicted column on demand. Selection within
 a column does not rescan it. Common values are returned whole, and ties use
-lexical text order. Current imported values remain Text.
+lexical text order. CSV/TSV and XML values remain Text; JSON/NDJSON profiles include canonical types.
 
 The desktop inspector uses a stationary rounded frame around an independent
 scroll view. Dialogs have explicit centered desktop positioning and bottom panel

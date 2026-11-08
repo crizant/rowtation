@@ -7,7 +7,7 @@ pub const MAX_WINDOW_ROWS: usize = 256;
 
 /// A value's semantic type. Number retains its exact lexical form, not an f64.
 /// CSV imports produce Text only; absence in ragged rows reads as Missing.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum CellValue {
     Missing,
     Null,
@@ -38,20 +38,74 @@ impl Column {
     }
 }
 
+/// Dense delimited rows keep their contiguous fast path. Structured rows store
+/// only present (zero-based column index, value) pairs in sorted order.
+#[derive(Debug, PartialEq, Eq)]
+pub enum RowCells {
+    Dense(Vec<CellValue>),
+    Sparse(Vec<(usize, CellValue)>),
+}
+impl RowCells {
+    /// Stored value at a schema index; absent entries are implicit Missing.
+    pub fn get(&self, index: usize) -> Option<&CellValue> {
+        match self {
+            Self::Dense(values) => values.get(index),
+            Self::Sparse(values) => values
+                .binary_search_by_key(&index, |(i, _)| *i)
+                .ok()
+                .map(|i| &values[i].1),
+        }
+    }
+    /// Number of stored entries, independent of schema width.
+    pub fn stored_len(&self) -> usize {
+        match self {
+            Self::Dense(v) => v.len(),
+            Self::Sparse(v) => v.len(),
+        }
+    }
+    /// Iterate stored values without materializing implicit Missing cells.
+    pub fn iter(&self) -> impl Iterator<Item = &CellValue> {
+        let (dense, sparse): (&[CellValue], &[(usize, CellValue)]) = match self {
+            Self::Dense(v) => (v, &[]),
+            Self::Sparse(v) => (&[], v),
+        };
+        dense.iter().chain(sparse.iter().map(|(_, value)| value))
+    }
+    pub(crate) fn set(&mut self, index: usize, value: CellValue) {
+        match self {
+            Self::Dense(values) => {
+                values.resize(values.len().max(index + 1), CellValue::Missing);
+                values[index] = value;
+                while values.last() == Some(&CellValue::Missing) {
+                    values.pop();
+                }
+            }
+            Self::Sparse(values) => match values.binary_search_by_key(&index, |(i, _)| *i) {
+                Ok(at) if value == CellValue::Missing => {
+                    values.remove(at);
+                }
+                Ok(at) => values[at].1 = value,
+                Err(at) if value != CellValue::Missing => values.insert(at, (index, value)),
+                Err(_) => (),
+            },
+        }
+    }
+}
+
 /// A stable row. Its backing position is immutable; sort operations
 /// order identities in a view rather than reorder this storage.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Row {
     pub(crate) id: u32,
-    pub(crate) cells: Vec<CellValue>,
+    pub(crate) cells: RowCells,
 }
 impl Row {
     /// Opaque document-scoped identity.
     pub fn id(&self) -> u32 {
         self.id
     }
-    /// Stored fields, excluding implicit trailing Missing values.
-    pub fn cells(&self) -> &[CellValue] {
+    /// Stored fields; structured rows do not allocate absent properties.
+    pub fn cells(&self) -> &RowCells {
         &self.cells
     }
 }
@@ -64,6 +118,8 @@ pub struct Document {
     id: String,
     pub(crate) columns: Vec<Column>,
     pub(crate) rows: Vec<Row>,
+    pub(crate) source_format: String,
+    pub(crate) structure: Option<crate::formats::structured::Structure>,
     source_delimiter: u8,
     source_headers: bool,
     pub(crate) revision: u32,
@@ -97,6 +153,8 @@ impl Document {
             id,
             columns,
             rows,
+            source_format: if delimiter == b'\t' { "tsv" } else { "csv" }.into(),
+            structure: None,
             source_delimiter: delimiter,
             source_headers: headers,
             revision: 0,
@@ -118,6 +176,14 @@ impl Document {
     /// Ordered schema width.
     pub fn column_count(&self) -> usize {
         self.columns.len()
+    }
+    /// Source format selected at import.
+    pub fn source_format(&self) -> &str {
+        &self.source_format
+    }
+    /// Reconstruction metadata; contains identities and shapes, never cell copies.
+    pub fn structure(&self) -> Option<&crate::formats::structured::Structure> {
+        self.structure.as_ref()
     }
     /// Imported delimiter byte.
     pub fn source_delimiter(&self) -> u8 {

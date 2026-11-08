@@ -1,6 +1,6 @@
 //! Stable view ordering, bounded search and sparse transactional editing.
 use crate::{
-    document::{CellValue, Document},
+    document::{CellValue, Document, RowCells},
     error::EngineError,
 };
 use nsh_core::prelude::*;
@@ -80,10 +80,28 @@ fn error(code: &'static str, message: &str) -> EngineError {
 fn text(value: &CellValue) -> Option<&str> {
     match value {
         CellValue::Text(s) | CellValue::Number(s) => Some(s),
+        CellValue::Boolean(true) => Some("true"),
+        CellValue::Boolean(false) => Some("false"),
         _ => None,
     }
 }
-fn compare(a: &CellValue, b: &CellValue) -> Ordering {
+fn numeric_key(value: &CellValue) -> Option<bigdecimal::BigDecimal> {
+    let CellValue::Number(value) = value else {
+        return None;
+    };
+    #[cfg(test)]
+    NUMBER_PARSES.with(|count| count.set(count.get() + 1));
+    bigdecimal::BigDecimal::from_str(value).ok()
+}
+#[cfg(test)]
+thread_local! { static NUMBER_PARSES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) }; }
+
+fn compare_keyed(
+    a: &CellValue,
+    b: &CellValue,
+    a_key: Option<&bigdecimal::BigDecimal>,
+    b_key: Option<&bigdecimal::BigDecimal>,
+) -> Ordering {
     fn rank(v: &CellValue) -> u8 {
         match v {
             CellValue::Number(_) => 0,
@@ -95,14 +113,11 @@ fn compare(a: &CellValue, b: &CellValue) -> Ordering {
         }
     }
     rank(a).cmp(&rank(b)).then_with(|| match (a, b) {
-        (CellValue::Number(a), CellValue::Number(b)) => match (
-            bigdecimal::BigDecimal::from_str(a),
-            bigdecimal::BigDecimal::from_str(b),
-        ) {
-            (Ok(a), Ok(b)) => a.cmp(&b),
-            (Ok(_), Err(_)) => Ordering::Less,
-            (Err(_), Ok(_)) => Ordering::Greater,
-            (Err(_), Err(_)) => a.cmp(b),
+        (CellValue::Number(a), CellValue::Number(b)) => match (a_key, b_key) {
+            (Some(a), Some(b)) => a.cmp(b),
+            (Some(_), None) => Ordering::Less,
+            (None, Some(_)) => Ordering::Greater,
+            (None, None) => a.cmp(b),
         },
         (CellValue::Text(a), CellValue::Text(b)) => a.cmp(b),
         (CellValue::Boolean(a), CellValue::Boolean(b)) => a.cmp(b),
@@ -135,9 +150,29 @@ impl Operations {
         Ok(())
     }
     fn reorder(&mut self, doc: &Document) {
-        self.order = (0..doc.row_count()).collect();
-        if let Some((c, descending)) = self.sort {
+        let Some((c, descending)) = self.sort else {
+            self.order = (0..doc.row_count()).collect();
+            return;
+        };
+        // Allocate numeric keys only when this column actually contains numbers.
+        // The immutable per-sort keys are dropped afterward; edits/undo naturally
+        // rebuild them, and lexical CellValue payloads are never altered.
+        let mut numbers: Option<Vec<Option<bigdecimal::BigDecimal>>> = None;
+        self.order = (0..doc.row_count())
+            .map(|i| {
+                if let Some(value @ CellValue::Number(_)) = doc.rows[i].cells.get((c - 1) as usize)
+                {
+                    let keys =
+                        numbers.get_or_insert_with(|| (0..doc.row_count()).map(|_| None).collect());
+                    keys[i] = numeric_key(value);
+                }
+                i
+            })
+            .collect();
+        {
             self.order.sort_by(|&a, &b| {
+                let a_key = numbers.as_ref().and_then(|keys| keys[a].as_ref());
+                let b_key = numbers.as_ref().and_then(|keys| keys[b].as_ref());
                 let a = doc.rows[a]
                     .cells
                     .get((c - 1) as usize)
@@ -146,7 +181,7 @@ impl Operations {
                     .cells
                     .get((c - 1) as usize)
                     .unwrap_or(&CellValue::Missing);
-                let order = compare(a, b);
+                let order = compare_keyed(a, b, a_key, b_key);
                 if descending { order.reverse() } else { order }
             });
         }
@@ -158,11 +193,15 @@ impl Operations {
     ) -> Result<SearchResult, EngineError> {
         self.matches.clear();
         self.matching_cells.clear();
-        if let Some(c) = options.column_id
-            && !doc.columns().iter().any(|v| v.id() == c)
-        {
-            return Err(error("UNKNOWN_COLUMN", "Select a column."));
-        }
+        let column_index = options
+            .column_id
+            .map(|id| {
+                doc.columns()
+                    .iter()
+                    .position(|column| column.id() == id)
+                    .ok_or_else(|| error("UNKNOWN_COLUMN", "Select a column."))
+            })
+            .transpose()?;
         if options.term.is_empty() {
             return Ok(SearchResult::default());
         }
@@ -182,23 +221,22 @@ impl Operations {
             .map_err(|e| error("INVALID_REGEX", &e.to_string()))?;
         let mut found = Vec::new();
         let mut scanned = 0usize;
-        let columns: Vec<_> = doc
-            .columns()
-            .iter()
-            .filter(|c| options.column_id.is_none_or(|id| id == c.id()))
-            .collect();
         for (position, &index) in self.order.iter().enumerate() {
             let row = &doc.rows[index];
-            for column in &columns {
-                let value = text(doc.cell(row.id(), column.id())?);
-                scanned = scanned.saturating_add(value.map_or(1, |v| v.len().max(1)));
+            let mut scan = |column: usize, cell: &CellValue| -> Result<(), EngineError> {
+                let Some(value) = text(cell) else {
+                    return Ok(());
+                };
+                // Only bytes actually searched consume the payload budget. Null,
+                // Missing and implicit sparse gaps contribute nothing; empty Text
+                // is still searched (and zero-width matches have their own cap).
+                scanned = scanned.saturating_add(value.len());
                 if scanned > 64 * 1024 * 1024 {
                     return Err(error(
                         "SEARCH_LIMIT",
                         "Search scope exceeds 64 MiB. Select a smaller column.",
                     ));
                 }
-                let Some(value) = value else { continue };
                 for m in regex.find_iter(value) {
                     if found.len() >= MAX_MATCHES {
                         return Err(error(
@@ -208,12 +246,34 @@ impl Operations {
                     }
                     found.push(SearchMatch {
                         row_id: row.id(),
-                        column_id: column.id(),
+                        column_id: doc.columns()[column].id(),
                         start: m.start() as u32,
                         end: m.end() as u32,
                         revision: doc.revision(),
                         row_index: position as u32,
                     });
+                }
+                Ok(())
+            };
+            if let Some(column) = column_index {
+                // One direct dense lookup or one sparse binary search per row.
+                if let Some(value) = row.cells.get(column) {
+                    scan(column, value)?;
+                }
+            } else {
+                match &row.cells {
+                    RowCells::Dense(values) => {
+                        for (column, value) in values.iter().enumerate() {
+                            scan(column, value)?;
+                        }
+                    }
+                    RowCells::Sparse(values) => {
+                        // Sparse entries are stored in schema order. Never walk
+                        // the schema or materialize Missing cells for this row.
+                        for (column, value) in values {
+                            scan(*column, value)?;
+                        }
+                    }
                 }
             }
         }
@@ -266,6 +326,11 @@ impl Operations {
     ) -> Result<MutationResult, EngineError> {
         self.check(doc, revision)?;
         let before = doc.cell(row, column)?.clone();
+        let after = if text(&before) == Some(value.as_str()) {
+            before.clone()
+        } else {
+            CellValue::Text(value)
+        };
         self.commit(
             doc,
             vec![Change {
@@ -277,7 +342,7 @@ impl Operations {
                     .unwrap_or(&before)
                     .clone(),
                 before,
-                after: CellValue::Text(value),
+                after,
             }],
             0,
         )
@@ -368,7 +433,11 @@ impl Operations {
                 start = m.end as usize;
             }
             value.push_str(&before[start..]);
-            change.after = CellValue::Text(value);
+            change.after = if value == before {
+                change.before.clone()
+            } else {
+                CellValue::Text(value)
+            };
         }
         self.commit(doc, changes, count)
     }
@@ -424,11 +493,7 @@ impl Operations {
                 .or_insert_with(|| c.original.clone());
             let clean = value == original;
             let cells = &mut doc.rows[(c.row - 1) as usize].cells;
-            cells.resize(cells.len().max(c.column as usize), CellValue::Missing);
-            cells[(c.column - 1) as usize] = value.clone();
-            while cells.last() == Some(&CellValue::Missing) {
-                cells.pop();
-            }
+            cells.set((c.column - 1) as usize, value.clone());
             if clean {
                 self.originals.remove(&(c.row, c.column));
             }
@@ -493,6 +558,85 @@ fn cost(changes: &[Change]) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn compare(a: &CellValue, b: &CellValue) -> Ordering {
+        compare_keyed(a, b, numeric_key(a).as_ref(), numeric_key(b).as_ref())
+    }
+    #[test]
+    fn search_budget_counts_searchable_payload_only_at_the_boundary() {
+        use crate::document::{Column, Row};
+        for sparse in [false, true] {
+            let values = vec![
+                CellValue::Text("x".repeat(64 * 1024 * 1024)),
+                CellValue::Missing,
+                CellValue::Null,
+                CellValue::Text(String::new()),
+                CellValue::Boolean(false),
+            ];
+            let cells = if sparse {
+                RowCells::Sparse(
+                    values
+                        .into_iter()
+                        .enumerate()
+                        .filter(|(_, value)| *value != CellValue::Missing)
+                        .collect(),
+                )
+            } else {
+                RowCells::Dense(values)
+            };
+            let columns = (1..=5)
+                .map(|id| Column {
+                    id,
+                    name: id.to_string(),
+                    original_name: None,
+                })
+                .collect();
+            let mut doc = Document::new(columns, vec![Row { id: 1, cells }], b',', false).unwrap();
+            let mut ops = Operations::default();
+            ops.sort(&doc, None, false).unwrap();
+            let options = |column| SearchOptions {
+                term: "false".into(),
+                column_id: column,
+                ..Default::default()
+            };
+            assert_eq!(ops.search(&doc, options(Some(5))).unwrap().count, 1);
+            assert_eq!(
+                ops.search(&doc, options(None)).err().unwrap().code(),
+                "SEARCH_LIMIT"
+            );
+            assert!(ops.matches.is_empty());
+            assert!(ops.matching_cells.is_empty());
+            doc.rows[0].cells.set(4, CellValue::Missing);
+            // Exactly 64 MiB remains: gaps, Null and empty Text must add no bytes.
+            assert_eq!(ops.search(&doc, options(None)).unwrap().count, 0);
+            assert_eq!(
+                ops.search(
+                    &doc,
+                    SearchOptions {
+                        term: "^$".into(),
+                        regex: Some(true),
+                        ..Default::default()
+                    }
+                )
+                .unwrap()
+                .count,
+                1
+            );
+        }
+    }
+    #[test]
+    fn numeric_sort_parses_each_key_once() {
+        let input = (0..2000)
+            .map(|i| format!("{{\"n\":{}.000000000000000000001}}\n", (i * 7919) % 2000))
+            .collect::<String>();
+        let doc = crate::formats::structured::parse(input.as_bytes(), "ndjson").unwrap();
+        let mut ops = Operations::default();
+        NUMBER_PARSES.with(|count| count.set(0));
+        ops.sort(&doc, Some(1), false).unwrap();
+        NUMBER_PARSES.with(|count| assert_eq!(count.get(), 2000));
+        assert_eq!(ops.order[0], 0);
+        ops.sort(&doc, Some(1), true).unwrap();
+        NUMBER_PARSES.with(|count| assert_eq!(count.get(), 4000));
+    }
     #[test]
     fn mixed_types_and_exact_numeric_comparison() {
         let n = |s: &str| CellValue::Number(s.into());

@@ -257,9 +257,11 @@ mod browser {
             ..Default::default()
         };
         let lower = result.name.to_ascii_lowercase();
-        if !(lower.ends_with(".csv") || lower.ends_with(".tsv")) {
-            result.error =
-                Some("Choose a .csv or .tsv file. Other formats are not supported yet.".into());
+        if ![".csv", ".tsv", ".json", ".ndjson", ".jsonl", ".xml"]
+            .iter()
+            .any(|extension| lower.ends_with(extension))
+        {
+            result.error = Some("Choose a .csv, .tsv, .json, .ndjson, .jsonl or .xml file.".into());
         } else if !confirmed && result.size > LARGE_INPUT_BYTES as f64 {
             result.deferred = true;
             DEFERRED.set(Some(Deferred {
@@ -298,10 +300,8 @@ mod browser {
             .unchecked_into();
         input.set_id(INPUT_ID);
         input.set_type("file");
-        input.set_accept(".csv,.tsv,text/csv,text/tab-separated-values");
-        input
-            .set_attribute("aria-label", "Choose CSV or TSV file")
-            .ok();
+        input.set_accept(".csv,.tsv,.json,.ndjson,.jsonl,.xml,text/csv,text/tab-separated-values,application/json,application/xml");
+        input.set_attribute("aria-label", "Choose data file").ok();
         input.set_attribute("style", "display:none").ok();
         document
             .body()
@@ -364,7 +364,7 @@ mod browser {
                 cancel_pending();
                 callback.post(LocalImport {
                     request_id: Some(version.get().to_string()),
-                    error: Some("Drop one CSV or TSV file at a time.".into()),
+                    error: Some("Drop one data file at a time.".into()),
                     ..Default::default()
                 });
                 return;

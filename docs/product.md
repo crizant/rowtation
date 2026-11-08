@@ -5,29 +5,25 @@
 Rowtation converts structured data in the browser. The workflow is import →
 inspect → transform → export. The Rust document core and CSV/TSV
 parser/serializer and CSV/TSV import/inspection are implemented. Sorting, search, editing, find/replace and bounded undo/redo are implemented;
-other formats and download workflows below remain planned. See the
+JSON, NDJSON and tabular XML imports are also implemented; Excel and download workflows remain planned. See [structured import rules](structured-imports.md). See the
 architecture for the implemented value, header, delimiter and resource policies.
 
 ## Implemented import and inspection
 
-- Local .csv/.tsv files by picker/drop, or pasted UTF-8 CSV/TSV text.
+- Local CSV/TSV, JSON, NDJSON/JSONL and XML by picker/drop or UTF-8 paste.
 - Rust delimiter suggestion, explicit header/separator review, actionable parsing
   errors, loading and empty states, atomic document replacement.
 - Virtualized two-axis table with row numbers, sticky headers, cell selection and
-  keyboard navigation. Values remain literal text; long values use grid previews.
+  keyboard navigation. Values keep canonical types; long values use grid previews.
 - Desktop column inspector and narrow-browser contextual panel: exact unique,
-  empty and missing counts, five common values, source settings and selection.
+  empty, null and missing counts, five common values, source settings and selection.
 - In-memory active document only. No recent history or persistence; closing/replacing it
   disposes its retained Rust session. No upload or backend.
 
 ## Planned import extensions
 
-- Accept pasted text, dropped files and an explicit Open action.
-- Support CSV, TSV, JSON, NDJSON, XML and Excel. Proposed Excel input scope is
+- Excel remains planned. Proposed Excel input scope is
   `.xlsx` and `.xls`; verify crate and WASM support before promising either.
-- Show the detected format and relevant parsing options. Allow correction when
-  detection is ambiguous; avoid silently changing the data.
-- Report malformed input with actionable location details when available.
 - Offer worksheet selection for workbooks with multiple sheets.
 
 ## Implemented table operations
@@ -72,8 +68,7 @@ replacement and history behavior.
 
 ## Decisions needed during implementation
 
-- JSON/XML nesting and attribute mapping, flattening and reconstruction rules.
-- Null versus empty string versus absent field; mixed-type columns and coercion.
+- Structured import mapping and type rules are specified in structured-imports.md.
 - Header detection, encodings, delimiters and malformed-row recovery.
 - Excel dates, formulas versus cached values, multiple sheets and precision.
 - Export ordering for formats that are not implemented yet.

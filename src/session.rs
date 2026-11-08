@@ -13,10 +13,12 @@ use crate::{
 use nsh_core::prelude::*;
 use std::collections::VecDeque;
 
-/// Explicit CSV/TSV import options. CSV with a header is the default.
+/// Explicit format and CSV/TSV import options. CSV with a header is the default.
 #[derive(JsObject, Default)]
 #[non_exhaustive]
 pub struct ImportOptions {
+    /// Explicit source format: csv, tsv, json, ndjson or xml. Defaults to delimited.
+    pub format: Option<String>,
     /// One ASCII character; defaults to comma. Pass a tab for TSV.
     pub delimiter: Option<String>,
     /// Defaults to true; false generates Column 1, Column 2, etc.
@@ -57,6 +59,8 @@ pub struct RowWindow {
 #[derive(JsObject, Default)]
 #[non_exhaustive]
 pub struct DocumentMetadata {
+    /// Imported source format.
+    pub format: String,
     /// Runtime-unique document identity. Not persistent across browser reloads.
     pub id: String,
     /// Number of data rows, excluding a header.
@@ -91,13 +95,13 @@ pub enum CellKind {
     /// Absent field, including the tail of a short delimited record.
     #[default]
     Missing,
-    /// Explicit null, reserved for future format adapters.
+    /// Explicit JSON null.
     Null,
     /// Literal text, including empty strings.
     Text,
-    /// Boolean, reserved for future format adapters.
+    /// JSON boolean.
     Boolean,
-    /// Exact numeric lexical form, reserved for future format adapters.
+    /// Exact JSON numeric lexical token.
     Number,
 }
 
@@ -212,11 +216,7 @@ impl DocumentSession {
             profiles: VecDeque::new(),
             job: None,
             operations: Operations::default(),
-            document: delimited::parse(
-                &input,
-                options.delimiter.as_deref().unwrap_or(","),
-                options.headers.unwrap_or(true),
-            )?,
+            document: parse_input(&input, &options)?,
         })
     }
 
@@ -227,17 +227,14 @@ impl DocumentSession {
             profiles: VecDeque::new(),
             job: None,
             operations: Operations::default(),
-            document: delimited::parse(
-                &source.bytes,
-                options.delimiter.as_deref().unwrap_or(","),
-                options.headers.unwrap_or(true),
-            )?,
+            document: parse_input(&source.bytes, &options)?,
         })
     }
 
     /// Retrieve counts, identity, source options and revision without copying rows.
     pub fn metadata(&self) -> DocumentMetadata {
         DocumentMetadata {
+            format: self.document.source_format().into(),
             id: self.document.id().into(),
             row_count: self.document.row_count() as u32,
             column_count: self.document.column_count() as u32,
@@ -246,6 +243,12 @@ impl DocumentSession {
             delimiter: char::from(self.document.source_delimiter()).to_string(),
             headers: self.document.source_headers(),
         }
+    }
+
+    /// Exact import warning dimensions of this already parsed document. Source
+    /// byte length comes from the retained candidate; this never reparses input.
+    pub fn import_size(&self, byte_length: u32) -> crate::inspection::ImportSize {
+        crate::inspection::document_size(&self.document, byte_length as usize)
     }
 
     /// Retrieve the ordered schema.
@@ -483,11 +486,35 @@ impl DocumentSession {
     /// Serialize the whole document to UTF-8 bytes (Uint8Array). This is an internal
     /// operation, not a browser download. Does not mutate dirty state or revision.
     pub fn serialize(&self, options: ExportOptions) -> Result<Vec<u8>, EngineError> {
+        if self.document.structure().is_some() {
+            return Err(EngineError::new(
+                "LOSSY_EXPORT",
+                "Structured export is not implemented. Flattened delimited output would lose source structure and types.",
+            ));
+        }
         let source = char::from(self.document.source_delimiter()).to_string();
         delimited::serialize(
             &self.document,
             options.delimiter.as_deref().unwrap_or(&source),
             options.headers.unwrap_or(self.document.source_headers()),
         )
+    }
+}
+
+fn parse_input(input: &[u8], options: &ImportOptions) -> Result<Document, EngineError> {
+    match options.format.as_deref().unwrap_or("csv") {
+        format @ ("json" | "ndjson" | "xml") => crate::formats::structured::parse(input, format),
+        format @ ("csv" | "tsv") => delimited::parse(
+            input,
+            options
+                .delimiter
+                .as_deref()
+                .unwrap_or(if format == "tsv" { "\t" } else { "," }),
+            options.headers.unwrap_or(true),
+        ),
+        _ => Err(EngineError::new(
+            "INVALID_FORMAT",
+            "Choose CSV, TSV, JSON, NDJSON or XML.",
+        )),
     }
 }

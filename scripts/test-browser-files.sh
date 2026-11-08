@@ -22,20 +22,40 @@ if [ -n "${ROWTATION_BROWSER:-}" ]; then
 fi
 nsh test App.tsx --target web "$@" <<'STEPS'
 await app.setViewport(1280, 800);
+// Structured formats use the same real File picker/drop bridge.
+await app.keyboard.press("F11");
+await app.press("Choose file…");
+await app.waitFor("Import “picked.json”");
+if (app.texts().includes("First row contains column headers")) throw new Error("JSON exposed CSV settings");
+await app.press("Import document");
+await app.waitFor("1 row · 2 columns");
+await app.waitFor("JSON · UTF-8");
+if (!app.texts().includes("900719925474099312345")) throw new Error("Picker lost numeric precision");
+await app.keyboard.press("F12");
+await app.waitFor("Import “dropped.xml”");
+await app.press("Import document");
+await app.waitFor("XML · UTF-8");
+if (!app.texts().includes("001") || !app.texts().includes("Hana")) throw new Error("XML drop lost fields");
+await app.keyboard.press("F5");
+await app.waitFor("Import “dropped.ndjson”");
+await app.press("Import document");
+await app.waitFor("NDJSON · UTF-8");
+await app.waitFor("2 rows · 2 columns");
+await app.press("close-document");
 await app.press("Choose file…");
 await app.waitFor("Import “picked.csv”");
 await app.press("Import document");
 await app.waitFor("2 rows · 7 columns");
 if (!app.texts().includes("00123")) throw new Error("Picker lost literal text");
 await app.keyboard.press("F9");
-await app.waitFor("Drop one CSV or TSV file at a time.");
+await app.waitFor("Drop one data file at a time.");
 if (!app.texts().includes("picked.csv")) throw new Error("Multiple drop replaced document");
 await app.keyboard.press("F7");
-await app.waitFor("unsupported.json: Choose a .csv or .tsv file. Other formats are not supported yet.");
+await app.waitFor("unsupported.xlsx: Choose a .csv, .tsv, .json, .ndjson, .jsonl or .xml file.");
 await app.keyboard.press("F10");
 await app.waitFor("Import “broken.csv”");
 await app.press("Import document");
-await app.waitFor("Check the separator and quoted fields, or choose another file. Your current document is unchanged.");
+await app.waitFor("Correct the input or choose another format or file. Your current document is unchanged.");
 await app.press("Cancel");
 if (!app.texts().includes("picked.csv")) throw new Error("Invalid drop replaced document");
 await app.keyboard.press("F8");
@@ -52,8 +72,8 @@ await app.waitFor("2 rows · 7 columns");
 
 // A rejected file must remove the previous review draft, never the open document.
 for (const [key, message] of [
-  ["F7", "unsupported.json: Choose a .csv or .tsv file. Other formats are not supported yet."],
-  ["F4", "invalid-utf8.csv: INVALID_UTF8: Save the file as UTF-8 CSV or TSV and try again."],
+  ["F7", "unsupported.xlsx: Choose a .csv, .tsv, .json, .ndjson, .jsonl or .xml file."],
+  ["F4", "invalid-utf8.csv: INVALID_UTF8: Save the file as UTF-8 and try again."],
 ]) {
   await app.press("More");
   await app.press("Import…");

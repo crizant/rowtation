@@ -1,6 +1,6 @@
 import { cleanup, Clipboard, effect, Image, keymap, mount, platform, Scroll, signal, Text, View, windowSize, type InputRef } from "nsh";
 import { AlertDialog, Button as BaseButton, Menu, MenuItem, MenuSeparator, Toolbar } from "nsh/base";
-import { BrowserImport, BrowserStyles, DocumentSession, ImportSource, type ColumnMetadata, type ColumnProfile, type DocumentMetadata, type ImportAnalysis, type LocalImport, type SearchMatch, type SearchResult } from "rowtation/native";
+import { BrowserImport, BrowserStyles, DocumentSession, ImportSource, type ColumnMetadata, type ColumnProfile, type DocumentMetadata, type ImportAnalysis, type ImportSize, type LocalImport, type SearchMatch, type SearchResult } from "rowtation/native";
 import appIcon from "./assets/icon.svg";
 import { ActionList, ActionRow } from "./components/ActionList";
 import { Badge } from "./components/Badge";
@@ -135,9 +135,9 @@ function DocumentView(props: { document: OpenDocument; onClose: () => void; onIm
   function wholeValue(): string | null {
     const cell = selection();
     if (!cell) return null;
-    if (!cell.preview.truncated) return cell.preview.text ?? cell.preview.number ?? "";
+    if (!cell.preview.truncated) return cell.preview.text ?? cell.preview.number ?? (cell.preview.boolean == null ? "" : String(cell.preview.boolean));
     const value = timed("Read whole value", () => props.document.session.readCell(cell.rowId, cell.columnId), () => bytes(cell.preview.byteLength));
-    return value.text ?? value.number ?? "";
+    return value.text ?? value.number ?? (value.boolean == null ? "" : String(value.boolean));
   }
   function showValue() { closeInfo(); full.set(wholeValue()); }
   let copied: number | undefined;
@@ -342,7 +342,7 @@ function DocumentView(props: { document: OpenDocument; onClose: () => void; onIm
   function commitEdit(tab = false) {
     attempt(() => {
       const current = selection(); if (!current) return;
-      props.document.session.editCell(current.rowId, current.columnId, editDraft(), metadata().revision);
+      if (editDraft() !== wholeValue()) props.document.session.editCell(current.rowId, current.columnId, editDraft(), metadata().revision);
       const position = current.rowIndex * metadata().columnCount + current.columnIndex + 1;
       releaseEditor(() => {
         refresh();
@@ -392,7 +392,7 @@ function DocumentView(props: { document: OpenDocument; onClose: () => void; onIm
     if (column < 0) return null;
     return { row: match.rowIndex, column, start: match.start, end: match.end };
   }
-  const format = () => (props.document.metadata.delimiter === "\t" ? "TSV" : "CSV") + " · UTF-8";
+  const format = () => props.document.metadata.format.toUpperCase() + " · UTF-8";
   const menuPopup = "min-w-44 overflow-hidden rounded-xl border border-border/70 bg-background p-1 shadow-lg";
   return <View class="relative flex-1 min-h-0 min-w-0 bg-background">
     <Toolbar accessibilityLabel="Document toolbar" class="min-h-14 shrink-0 flex-row items-center gap-2 border-b border-border/70 px-3 py-2 md:gap-3 md:px-4">
@@ -438,6 +438,7 @@ function DocumentView(props: { document: OpenDocument; onClose: () => void; onIm
             </View>
           </View>
         </If>
+        <If when={replacing() && (metadata().format === "json" || metadata().format === "ndjson")}><Text class="text-xs text-muted-foreground">Changed numbers and booleans become text. Unchanged values keep their type.</Text></If>
         <If when={regex()}><Text class="text-xs text-muted-foreground">Replacement is literal</Text></If>
         <If when={operationError()}><Text role="alert" class="text-xs text-destructive">{operationError()}</Text></If>
         <If when={notice()}><Text class="text-xs text-muted-foreground">{notice()}</Text></If>
@@ -487,6 +488,7 @@ function DocumentView(props: { document: OpenDocument; onClose: () => void; onIm
       <Dialog title={`Edit ${column()?.name || "cell"}`} onClose={cancelEdit} footer={<View class="flex-row justify-end gap-2">
         <Button label="Cancel" quiet onPress={cancelEdit} /><Button label="Save cell" onPress={() => commitEdit()} />
       </View>}>
+        <Text class="text-xs text-muted-foreground">Changed values are saved as text. Unchanged numbers and booleans keep their type. Clear cell saves empty text.</Text>
         <EditInput value={editDraft()} onChange={value => editDraft.set(value)} onCommit={commitEdit} onCancel={cancelEdit} onBind={blur => { blurEditor = blur; }} />
         <If when={operationError()}><Text class="text-xs text-destructive">{operationError()}</Text></If>
       </Dialog>
@@ -520,7 +522,7 @@ function Home(props: { dragging: boolean; onPick: () => void; onPaste: () => voi
   keymap.bind("mod+v", () => props.onPaste(), { when: "notEditing" });
   const note = "Your data stays in this browser. Nothing is uploaded.";
   const formats = <View class="flex-row gap-2">
-    <Each of={["CSV", "TSV"]}>{label => <View class="rounded-full border border-border/60 bg-background px-2.5 py-1 shadow-sm">
+    <Each of={["CSV", "TSV", "JSON", "NDJSON", "XML"]}>{label => <View class="rounded-full border border-border/60 bg-background px-2.5 py-1 shadow-sm">
       <Text class="text-xs font-medium text-foreground">{label()}</Text></View>}</Each>
   </View>;
   return <Scroll class="flex-1 min-h-0" contentStyle={{ flexGrow: 1 }}>
@@ -532,7 +534,7 @@ function Home(props: { dragging: boolean; onPick: () => void; onPaste: () => voi
             class="cursor-pointer min-h-56 items-center justify-center gap-3 rounded-3xl border border-border/70 bg-background p-8 shadow-sm active:bg-muted/40 focus:ring-2 focus:ring-ring">
             <Icon name="upload-simple" class="h-8 w-8" />
             <Text class="pt-1 text-lg font-semibold text-foreground">Import data</Text>
-            <Text class="text-[13px] text-muted-foreground">CSV · TSV</Text>
+            <Text class="text-[13px] text-muted-foreground">CSV · TSV · JSON · NDJSON · XML</Text>
           </BaseButton>
           <ActionList>
             <ActionRow label="Paste from clipboard" icon="clipboard-text" onPress={() => props.onPaste()} />
@@ -547,7 +549,7 @@ function Home(props: { dragging: boolean; onPick: () => void; onPaste: () => voi
             <Image src={appIcon} accessibilityElementsHidden class="h-16 w-16" />
             <View class="items-center gap-1.5">
               <Text class="text-3xl font-semibold tracking-tight text-foreground">Rowtation</Text>
-              <Text class="text-sm text-muted-foreground">Import and inspect CSV and TSV.</Text>
+              <Text class="text-sm text-muted-foreground">Import and inspect structured data.</Text>
             </View>
           </View>
           <View testID="import-area" classList={{ "ring-2 ring-ring": props.dragging }}
@@ -592,20 +594,33 @@ export function App() {
   const paste = signal("");
   const delimiter = signal(",");
   const headers = signal(true);
+  const format = signal("csv");
+  const structuredSize = signal<ImportSize | null>(null);
+  const prepared = signal<OpenDocument | null>(null);
+  const delimited = () => format() === "csv" || format() === "tsv";
+  function discardPrepared() { prepared()?.dispose(); prepared.set(null); structuredSize.set(null); }
+  function chooseFormat(value: string) {
+    if (format() === value && prepared()) return;
+    discardPrepared();
+    format.set(value); error.set("");
+    if (value === "csv" || value === "tsv") { delimiter.set(value === "tsv" ? "\t" : ","); return; }
+    try { structuredSize.set(draft()?.inspectFormat(value) ?? null); } catch (cause) { fail(cause); }
+  }
   const analysis = signal<ImportAnalysis | null>(null);
   const error = signal("");
   const busy = signal(false);
   const dragging = signal(false);
   let alive = true;
   let request = 0;
-  cleanup(() => { alive = false; request++; BrowserImport.cancelPending(); draft()?.dispose(); active()?.dispose(); });
+  cleanup(() => { alive = false; request++; BrowserImport.cancelPending(); prepared()?.dispose(); draft()?.dispose(); active()?.dispose(); });
   keymap.bind("ctrl+shift+d", () => { diagnosticsOn.set(!diagnosticsOn()); measurements.set([]); });
 
   /** Clears review state; the Rust-held file is released here or by cancelPending. */
   function clearDraft() {
     request++;
+    prepared()?.dispose(); prepared.set(null);
     draft()?.dispose();
-    draft.set(null); pending.set(null); analysis.set(null); busy.set(false); error.set(""); accepted.set(false);
+    draft.set(null); pending.set(null); analysis.set(null); structuredSize.set(null); busy.set(false); error.set(""); accepted.set(false);
   }
   function resetImport() { clearDraft(); BrowserImport.cancelPending(); }
   function dismiss() { resetImport(); mode.set(null); paste.set(""); }
@@ -614,7 +629,7 @@ export function App() {
   function inspect(source: ImportSource, retry: "paste" | null) {
     try {
       const result = timed("Inspect", () => source.inspect(), () => bytes(source.byteLength));
-      draft.set(source); analysis.set(result); delimiter.set(result.delimiter); headers.set(true); mode.set("review");
+      draft.set(source); analysis.set(result); delimiter.set(result.delimiter); headers.set(true); mode.set("review"); chooseFormat(result.format);
     } catch (cause) {
       const name = source.name;
       source.dispose();
@@ -666,22 +681,32 @@ export function App() {
     const source = draft();
     if (mode() !== "review" || !source || busy()) return;
     const id = ++request;
-    const options = { delimiter: delimiter(), headers: headers() };
+    const options = { format: format(), delimiter: delimiter(), headers: headers() };
     busy.set(true); error.set("");
     // Let the loading state paint before the synchronous Rust parser runs.
     await new Promise(resolve => setTimeout(resolve, 30));
     if (!alive || id !== request) return;
     let candidate: DocumentSession | null = null;
     try {
-      candidate = timed("Parse", () => DocumentSession.fromSource(source, options), () => bytes(source.byteLength));
-      const session = candidate;
-      const metadata = session.metadata();
-      const columns = session.columns();
-      let live = true;
-      const document: OpenDocument = { session, metadata, columns, name: source.name,
-        dispose: () => { if (live) { live = false; session.dispose(); } } };
+      let document = prepared();
+      if (!document) {
+        candidate = timed("Parse", () => DocumentSession.fromSource(source, options), () => bytes(source.byteLength));
+        const session = candidate;
+        const metadata = session.metadata();
+        let live = true;
+        document = { session, metadata, columns: [], name: source.name,
+          dispose: () => { if (live) { live = false; session.dispose(); } } };
+        prepared.set(document); candidate = null;
+        if (!delimited() || !size()?.dimensionsKnown) {
+          const exact = session.importSize(source.byteLength);
+          structuredSize.set(exact);
+          if (exact.large && !accepted()) return;
+        }
+      }
+      document.columns = document.session.columns();
+      prepared.set(null);
       active.set(document);
-      timeToNextFrame("Document open to next frame", `${metadata.columnCount} columns`);
+      timeToNextFrame("Document open to next frame", `${document.metadata.columnCount} columns`);
       // The session holds its own data; release the source bytes now.
       source.dispose(); draft.set(null); analysis.set(null); paste.set(""); mode.set(null);
     } catch (cause) { candidate?.dispose(); fail(cause); }
@@ -689,11 +714,12 @@ export function App() {
   }
 
   const compact = platform.desktop;
-  const size = () => { const result = analysis(); return result ? (delimiter() === "\t" ? result.tab : result.comma) : null; };
+  const size = () => { const result = analysis(); return structuredSize() ?? (result ? (delimiter() === "\t" ? result.tab : result.comma) : null); };
   const summary = () => {
     const result = analysis(), measured = size();
     if (!result || !measured) return "";
-    const rows = Math.max(0, measured.records - (headers() ? 1 : 0));
+    if (!measured.dimensionsKnown) return `${bytes(result.byteLength)} · Row and column counts are checked when you import.`;
+    const rows = Math.max(0, measured.records - (delimited() && !prepared() && headers() ? 1 : 0));
     return `${bytes(result.byteLength)} · ${count(rows, "row", "rows")} · ${count(measured.columns, "column", "columns")} · longest field ${bytes(measured.longestField)}`;
   };
 
@@ -720,9 +746,9 @@ export function App() {
     {/* Keyed by step so review opens at the top instead of keeping the paste step's scroll offset. */}
     <Each of={mode() ? [mode()!] : []} key={step => step}>{() =>
       <Dialog title={mode() === "paste" ? "Paste your data" : `Import “${(mode() === "confirm" ? pending()?.name : draft()?.name) ?? ""}”`}
-        description={mode() === "paste" ? "Paste CSV or TSV text below. You can review the format before opening it."
+        description={mode() === "paste" ? "Paste CSV, TSV, JSON, NDJSON or XML below. You can review the format before opening it."
           : mode() === "confirm" ? `This file is ${bytes(pending()?.size ?? 0)}. Rowtation has not read it yet.`
-          : analysis()?.ambiguous ? "Confirm the separator below; detection is uncertain." : "Format detected. Review the options before importing."}
+          : analysis()?.ambiguous ? "Confirm the format below; detection is uncertain." : "Format detected. Review the options before importing."}
         onClose={dismiss} footer={
           <View class="flex-row flex-wrap items-center justify-end gap-2">
             <If when={mode() === "paste" || (error() && !busy())}><Button label="Choose another file…" quiet compact={compact} onPress={pick} /></If>
@@ -740,7 +766,7 @@ export function App() {
           </View>
         }>
         <If when={mode() === "paste"}>
-          <Input label="CSV or TSV text" testID="paste-input" value={paste()} onChange={value => paste.set(value)} multiline placeholder={"name,city\nMia,Brisbane"} />
+          <Input label="Data to import" testID="paste-input" value={paste()} onChange={value => paste.set(value)} multiline placeholder={"name,city\nMia,Brisbane"} />
         </If>
         <If when={mode() === "confirm"}>
           <View role="alert" class="flex-row gap-3 rounded-xl border border-border bg-muted/60 p-4">
@@ -752,16 +778,23 @@ export function App() {
           </View>
         </If>
         <If when={mode() === "review"}>
+          <View class="flex-row flex-wrap gap-2">
+            <Each of={["csv", "tsv", "json", "ndjson", "xml"]}>{value =>
+              <Button testID={`import-format-${value()}`} label={value().toUpperCase()} accessibilityLabel={`${value().toUpperCase()}${format() === value() ? ", selected" : ""}`} quiet={format() !== value()} compact disabled={busy()} onPress={() => chooseFormat(value())} />
+            }</Each>
+          </View>
+          <If when={delimited()}>
           <ChoiceGroup>
-            <Choice mark="CSV" label="Comma" checked={delimiter() === ","} disabled={busy()} onSelect={() => delimiter.set(",")} />
-            <Choice mark="TSV" label="Tab" checked={delimiter() === "\t"} disabled={busy()} onSelect={() => delimiter.set("\t")} />
+            <Choice mark="CSV" label="Comma" checked={delimiter() === ","} disabled={busy()} onSelect={() => chooseFormat("csv")} />
+            <Choice mark="TSV" label="Tab" checked={delimiter() === "\t"} disabled={busy()} onSelect={() => chooseFormat("tsv")} />
           </ChoiceGroup>
           <View class="rounded-xl border border-border/70 px-4">
-            <Checkbox label="First row contains column headers" checked={headers()} disabled={busy()} onChange={value => headers.set(value)} />
+            <Checkbox label="First row contains column headers" checked={headers()} disabled={busy()} onChange={value => { discardPrepared(); headers.set(value); }} />
           </View>
+          </If>
           <View class="gap-1">
             <Text testID="import-summary" class="text-[13px] text-foreground">{summary()}</Text>
-            <Text class="text-xs text-muted-foreground">Values are preserved as text, including leading zeros and formula-like content.</Text>
+            <Text class="text-xs text-muted-foreground">{delimited() ? "Values are preserved as text, including leading zeros and formula-like content." : format() === "xml" ? "Attributes use @name; text uses #text. Repeated children use indexed paths. XML values stay text; mixed content and DTDs are rejected." : "Nested paths become columns. Numbers keep exact precision; strings keep their type. NDJSON skips blank lines."}</Text>
           </View>
           <If when={size()?.large && !accepted()}>
             <View role="alert" class="flex-row gap-3 rounded-xl border border-border bg-muted/60 p-4">
@@ -774,7 +807,7 @@ export function App() {
           </If>
         </If>
         <If when={error()}><View role="alert" class="gap-2"><Text class="text-sm text-destructive">{error()}</Text>
-          <Text class="text-xs text-muted-foreground">Check the separator and quoted fields, or choose another file. Your current document is unchanged.</Text></View></If>
+          <Text class="text-xs text-muted-foreground">Correct the input or choose another format or file. Your current document is unchanged.</Text></View></If>
       </Dialog>}
     </Each>
     <If when={diagnosticsOn()}><DiagnosticsPanel /></If>

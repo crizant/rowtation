@@ -11,13 +11,12 @@ Users will paste, drop or open CSV, TSV, JSON, NDJSON, XML and Excel files;
 inspect them as a table; sort, search, edit cells and find and replace values;
 then export and download the result.
 
-**Status:** CSV/TSV import and inspection are implemented: choose a local file,
+**Status:** CSV/TSV, JSON, NDJSON and tabular XML import and inspection are implemented: choose a local file,
 drop one into the browser, or paste text; review the separator and header option;
 then inspect a virtualized grid with keyboard/touch cell selection and column
 statistics. Sorting, scoped search, literal/regex find and replace, cell editing,
 bounded undo/redo and accurate modified-cell counts are implemented. Desktop uses
-a right inspector; narrow browsers use a contextual panel. Other formats and
-export/download UI remain planned. See [operation semantics](docs/operations.md).
+a right inspector; narrow browsers use a contextual panel. Excel and export/download UI remain planned. See [structured import rules](docs/structured-imports.md) for nesting, exact types and XML limitations. See [operation semantics](docs/operations.md).
 
 Data stays local. There is no backend, upload, telemetry, persistent storage or
 session history. Closing an unmodified document releases its Rust session.
@@ -56,8 +55,9 @@ There are no size caps on input, rows, columns, stored fields, value length or
 serialized output; the practical ceiling is the browser tab's memory and WASM's
 4 GiB address space. A picked or dropped file above 8 MiB is held unread until
 the user confirms; it is then read in 16 MiB slices into one Rust buffer that JS
-never mirrors. The review step measures the whole input in Rust and asks for
-confirmation ("Import anyway") above 8 MiB, 100,000 records, 512 columns,
+never mirrors. Delimited review measures the whole input in Rust. Structured review detects
+format from a bounded prefix, then parses once after Import; exact shape warnings
+retain the parsed candidate for confirmation. The workflow asks for confirmation ("Import anyway") above 8 MiB, 100,000 records, 512 columns,
 1,000,000 fields or a 1 MiB field. These thresholds are advisory, not measured
 performance limits. Row windows return at most 256 rows and can be narrowed to a
 column range and to 512-byte previews. The grid keeps a bounded 256-row cache
@@ -174,7 +174,7 @@ App.test.tsx           NSH bridge and app-runtime smoke tests
 components/            Styled controls, DataGrid and Inspector
 src/lib.rs             Rust API registered as rowtation/native
 src/document/          Canonical values, identities and storage access
-src/formats/           CSV/TSV parser, validation and serializer
+src/formats/           CSV/TSV and structured import adapters, delimited serializer
 src/session.rs         Retained NSH session, row windows and profile cache
 src/inspection.rs      Rust delimiter suggestions, size measurement and profile records
 src/browser_import.rs Browser file input/drop adapter through registered NSH API
