@@ -166,7 +166,7 @@ function DiagnosticsPanel() {
 
 function Home(props: { dragging: boolean; onPick: () => void; onPaste: () => void }) {
   keymap.bind("mod+v", () => props.onPaste(), { when: "notEditing" });
-  const note = "Your data stays in this browser. Nothing is uploaded. Very large files ask for confirmation before importing.";
+  const note = "Your data stays in this browser. Nothing is uploaded.";
   const formats = <View class="flex-row gap-2">
     <Each of={["CSV", "TSV"]}>{label => <View class="rounded-full border border-border/60 bg-background px-2.5 py-1 shadow-sm">
       <Text class="text-xs font-medium text-foreground">{label()}</Text></View>}</Each>
