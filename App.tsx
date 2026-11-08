@@ -520,11 +520,10 @@ function DiagnosticsPanel() {
 }
 
 const homeTagline = "View, Edit & Convert Your Data.";
-const homeSummary = "Search, edit, and convert CSV, TSV, JSON, NDJSON & XML files.";
+const homeSummary = "CSV, TSV, JSON, NDJSON & XML — all in your browser, without uploading a thing.";
 
 function Home(props: { dragging: boolean; onPick: () => void; onPaste: () => void }) {
   keymap.bind("mod+v", () => props.onPaste(), { when: "notEditing" });
-  const note = "Your data stays in this browser. Nothing is uploaded.";
   const formats = <View class="flex-row gap-2">
     <Each of={["CSV", "TSV", "JSON", "NDJSON", "XML"]}>{label => <View class="rounded-full border border-border/60 bg-background px-2.5 py-1 shadow-sm">
       <Text class="text-xs font-medium text-foreground">{label()}</Text></View>}</Each>
@@ -533,10 +532,12 @@ function Home(props: { dragging: boolean; onPick: () => void; onPaste: () => voi
     <If when={windowSize().width >= 640} else={
       <View class="flex-1 justify-center px-5 py-10">
         <View class="w-full max-w-[560px] gap-6 self-center">
-          <View class="gap-2">
-            <Text class="text-4xl font-bold tracking-tight text-foreground">Rowtation</Text>
-            <Text class="text-sm text-muted-foreground">{homeTagline}</Text>
-            <Text class="text-sm text-muted-foreground">{homeSummary}</Text>
+          <View class="gap-3">
+            <View class="gap-1">
+              <Text class="text-3xl font-semibold tracking-tight text-foreground">Rowtation</Text>
+              <Text class="text-base font-medium text-foreground">{homeTagline}</Text>
+            </View>
+            <Text class="text-[13px] font-normal text-muted-foreground">{homeSummary}</Text>
           </View>
           <BaseButton testID="import-area" onPress={() => props.onPick()}
             class="cursor-pointer min-h-56 items-center justify-center gap-3 rounded-3xl border border-border/70 bg-background p-8 shadow-sm active:bg-muted/40 focus:ring-2 focus:ring-ring">
@@ -548,17 +549,18 @@ function Home(props: { dragging: boolean; onPick: () => void; onPaste: () => voi
             <ActionRow label="Paste from clipboard" icon="clipboard-text" onPress={() => props.onPaste()} />
             <ActionRow label="Choose file…" icon="folder-open" onPress={() => props.onPick()} last />
           </ActionList>
-          <Text class="px-1 text-xs text-muted-foreground">{note}</Text>
         </View>
       </View>}>
       <View class="flex-1 items-center justify-center px-8 py-16">
         <View class="w-full max-w-[600px] items-center gap-8">
           <View class="items-center gap-4">
             <Image src={appIcon} accessibilityElementsHidden class="h-16 w-16" />
-            <View class="items-center gap-1.5">
-              <Text class="text-3xl font-semibold tracking-tight text-foreground">Rowtation</Text>
-              <Text class="text-center text-sm text-muted-foreground">{homeTagline}</Text>
-              <Text class="max-w-md text-center text-sm text-muted-foreground">{homeSummary}</Text>
+            <View class="items-center gap-3">
+              <View class="items-center gap-1">
+                <Text class="text-3xl font-semibold tracking-tight text-foreground">Rowtation</Text>
+                <Text class="text-center text-base font-medium text-foreground">{homeTagline}</Text>
+              </View>
+              <Text class="text-center text-[13px] font-normal text-muted-foreground">{homeSummary}</Text>
             </View>
           </View>
           <View testID="import-area" classList={{ "ring-2 ring-ring": props.dragging }}
@@ -572,7 +574,6 @@ function Home(props: { dragging: boolean; onPick: () => void; onPaste: () => voi
             </View>
             <View class="pt-3">{formats}</View>
           </View>
-          <Text class="text-xs text-center text-muted-foreground">{note}</Text>
         </View>
       </View>
     </If>

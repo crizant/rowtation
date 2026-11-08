@@ -39,14 +39,15 @@ cell navigation and touch access to essential commands. Adapt toolbars to narrow
 browsers while preserving actions. Style semantic NSH controls in the shared layer.
 
 
-On pointer desktops the import home is centered: app mark, title, the tagline
-“View, Edit & Convert Your Data.”, the line “Search, edit, and convert CSV, TSV,
-JSON, NDJSON & XML files.”, a rounded drop
+On pointer desktops the import home is centered: app mark, the 30-point semibold
+name grouped with the 16-point medium tagline “View, Edit & Convert Your Data.”,
+then, with a little more space, the 13-point muted line “CSV, TSV, JSON, NDJSON
+& XML — all in your browser, without uploading a thing.”, a rounded drop
 card with visible Paste (⌘V/Ctrl+V also works) and Choose file buttons, and supported-format
-chips. Narrow and touch browsers use a left-aligned title with that same tagline
-and line, a pressable import card
+chips. Narrow and touch browsers use that same type, left-aligned, a pressable import card
 and a grouped action list. Show CSV, TSV, JSON, NDJSON and XML as supported; there is no recent
-history. The privacy note is concise and mentions large-file confirmation.
+history. The home description says data stays in the browser. Large-file confirmation
+stays in the import review.
 
 The document toolbar contains a labeled back action, the filename, and a
 "CSV · UTF-8" badge, then Find, Undo, Redo, and Export… on desktop. Below 900 points
