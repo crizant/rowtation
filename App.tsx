@@ -1,5 +1,5 @@
 import { cleanup, Clipboard, effect, Image, keymap, mount, platform, Scroll, signal, Text, View, windowSize, type InputRef } from "nsh";
-import { AlertDialog, Button as BaseButton, Menu, MenuItem, MenuSeparator, Toolbar } from "nsh/base";
+import { AlertDialog, Button as BaseButton, Link, Menu, MenuItem, MenuSeparator, Toolbar } from "nsh/base";
 import { BrowserImport, BrowserStyles, DocumentSession, ImportSource, type ColumnMetadata, type ColumnProfile, type DocumentMetadata, type ImportAnalysis, type ImportSize, type LocalImport, type SearchMatch, type SearchResult } from "rowtation/native";
 import appIcon from "./assets/icon.svg";
 import { ActionList, ActionRow } from "./components/ActionList";
@@ -521,6 +521,15 @@ function DiagnosticsPanel() {
 
 const homeTagline = "View, Edit & Convert Your Data.";
 const homeSummary = "CSV, TSV, JSON, NDJSON & XML — all in your browser, without uploading a thing.";
+const projectUrl = "https://github.com/crizant/rowtation";
+
+function ProjectLink() {
+  const touch = () => windowSize().width < 640;
+  return <Link href={projectUrl} testID="project-link" accessibilityLabel="Rowtation on GitHub"
+    class={(touch() ? "min-h-11 min-w-11 " : "min-h-9 min-w-9 ") + "cursor-pointer flex-row items-center justify-center self-center rounded-md focus:ring-2 focus:ring-ring"}>
+    <Icon name="github-logo" color="muted-foreground" class={touch() ? "h-6 w-6" : "h-5 w-5"} />
+  </Link>;
+}
 
 function Home(props: { dragging: boolean; onPick: () => void; onPaste: () => void }) {
   keymap.bind("mod+v", () => props.onPaste(), { when: "notEditing" });
@@ -549,6 +558,7 @@ function Home(props: { dragging: boolean; onPick: () => void; onPaste: () => voi
             <ActionRow label="Paste from clipboard" icon="clipboard-text" onPress={() => props.onPaste()} />
             <ActionRow label="Choose file…" icon="folder-open" onPress={() => props.onPick()} last />
           </ActionList>
+          <ProjectLink />
         </View>
       </View>}>
       <View class="flex-1 items-center justify-center px-8 py-16">
@@ -574,6 +584,7 @@ function Home(props: { dragging: boolean; onPick: () => void; onPaste: () => voi
             </View>
             <View class="pt-3">{formats}</View>
           </View>
+          <ProjectLink />
         </View>
       </View>
     </If>

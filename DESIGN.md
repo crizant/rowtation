@@ -44,8 +44,9 @@ name grouped with the 16-point medium tagline “View, Edit & Convert Your Data.
 then, with a little more space, the 13-point muted line “CSV, TSV, JSON, NDJSON
 & XML — all in your browser, without uploading a thing.”, a rounded drop
 card with visible Paste (⌘V/Ctrl+V also works) and Choose file buttons, and supported-format
-chips. Narrow and touch browsers use that same type, left-aligned, a pressable import card
-and a grouped action list. Show CSV, TSV, JSON, NDJSON and XML as supported; there is no recent
+chips. A muted GitHub icon under that card opens https://github.com/crizant/rowtation.
+Narrow and touch browsers use that same type, left-aligned, a pressable import card
+and a grouped action list, with the same GitHub icon centered under the list. Show CSV, TSV, JSON, NDJSON and XML as supported; there is no recent
 history. The home description says data stays in the browser. Large-file confirmation
 stays in the import review.
 

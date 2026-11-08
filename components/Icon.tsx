@@ -7,6 +7,7 @@ import check from "./icons/check.svg";
 import clipboardText from "./icons/clipboard-text.svg";
 import copy from "./icons/copy.svg";
 import folderOpen from "./icons/folder-open.svg";
+import githubLogo from "./icons/github-logo.svg";
 import info from "./icons/info.svg";
 import magnifyingGlass from "./icons/magnifying-glass.svg";
 import uploadSimple from "./icons/upload-simple.svg";
@@ -23,6 +24,7 @@ const icons = {
   "clipboard-text": clipboardText,
   copy,
   "folder-open": folderOpen,
+  "github-logo": githubLogo,
   info,
   "magnifying-glass": magnifyingGlass,
   "upload-simple": uploadSimple,
