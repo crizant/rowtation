@@ -15,9 +15,12 @@ cargo fmt --check
 nsh check
 nsh build
 nsh test
+node --test scripts/web-metadata.test.mjs
 scripts/test-browser.sh
 scripts/test-browser-files.sh
 nsh package --target web -o dist
+node scripts/web-metadata.mjs dist/Rowtation/index.html
+node scripts/web-metadata.mjs --check dist/Rowtation/index.html
 ```
 
 Test meaningful data behavior and malformed input in Rust with synthetic
@@ -39,9 +42,9 @@ browser WASM compatibility and document native-only feature exclusions.
 requests targeting `main`, pushes to `main`, and manual workflow runs:
 
 - `Rust formatting`: `cargo fmt --check`, with only Rust and rustfmt setup.
-- `Static checks and headless tests`: `nsh check`, `nsh build`, then `nsh test`,
-  sharing compilation within the job.
-- `Browser and WASM integration`: `scripts/test-browser.sh`, local file workflow checks, then `nsh package --target web -o dist`, production-package downloads/copy and export dialog captures, using installed Chrome. Screenshots are retained as the `export-dialog-screenshots` workflow artifact.
+- `Static checks and headless tests`: `nsh check`, `nsh build`, `nsh test`, then
+  `node --test scripts/web-metadata.test.mjs`, sharing compilation within the job.
+- `Browser and WASM integration`: `scripts/test-browser.sh`, local file workflow checks, then `nsh package --target web -o dist`, the homepage title and meta description stamp, production-package downloads/copy and export dialog captures, using installed Chrome. Screenshots are retained as the `export-dialog-screenshots` workflow artifact.
   This job installs/caches the wasm-bindgen CLI matching Cargo.lock.
 
 The two NSH jobs share a matrix definition with fail-fast disabled, so a failure

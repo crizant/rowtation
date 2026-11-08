@@ -36,6 +36,8 @@ nsh test
 scripts/test-browser.sh
 scripts/test-browser-files.sh
 nsh package --target web -o dist
+node scripts/web-metadata.mjs dist/Rowtation/index.html
+node scripts/web-metadata.mjs --check dist/Rowtation/index.html
 node scripts/test-export-package.mjs --build dist/Rowtation --browser "$ROWTATION_BROWSER"
 ```
 

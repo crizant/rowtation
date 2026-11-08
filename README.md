@@ -135,6 +135,8 @@ nsh build                            # Validate and bundle TSX
 nsh test                             # Rust tests and headless UI tests
 scripts/test-browser.sh               # Shared tests with real browser input
 nsh package --target web -o dist      # Build the deployable static website
+node scripts/web-metadata.mjs dist/Rowtation/index.html
+node scripts/web-metadata.mjs --check dist/Rowtation/index.html
 ```
 
 NSH may compile a local helper to describe Rust exports or run headless tests.
@@ -160,7 +162,10 @@ the website. Test imports against the deployed origin before release. Validate d
 Cloudflare Pages builds from the GitHub integration. Its build command is
 `sh scripts/cloudflare-pages-build.sh`, and its output directory is
 `dist/Rowtation`. The script installs the Linux toolchain, NSH 0.4.0, and the
-wasm-bindgen CLI version in `Cargo.lock`, then runs `nsh package --target web -o dist`.
+wasm-bindgen CLI version in `Cargo.lock`, runs `nsh package --target web -o dist`,
+then writes the page title and meta description into `dist/Rowtation/index.html`.
+NSH’s page template has no description field, so that stamp is what puts them in
+the HTML before any script runs. `nsh run` still serves NSH’s development page.
 It is for the Pages Linux image; local macOS builds use the commands above.
 
 ## Project layout
