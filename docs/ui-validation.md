@@ -36,8 +36,14 @@ are eight UI/bridge workflows in total; parser and statistics cases stay in Rust
 Appearance is verified through screenshots rather than a separate DOM geometry
 test harness.
 
-`nsh test --target web --browser <Chromium>` runs those UI workflows through actual
-browser input and Rust/WASM, independently from the native headless checks.
+`ROWTATION_BROWSER=/path/to/chrome scripts/test-browser.sh` runs the shared test
+files through actual browser input and Rust/WASM. It discovers tracked and
+untracked test files, excluding the explicit `*.headless.test.ts[x]` suffix.
+`nsh test` still discovers all tests, including the headless-only iOS long-press
+case in `components/DataGrid.headless.test.tsx`. NSH 0.4 rejects `platform: "ios"`
+on its web host, and its physical hit layer does not deliver that custom-cell
+long-press; see [the scrolling investigation](scroll-performance.md#custom-cell-renderer-regression-pr-8).
+Use `nsh test <test-file> --target web --browser <Chromium>` for one shared file.
 
 `scripts/test-browser-files.sh` adds browser File/FileList/DragEvent coverage:
 file picker selection, a valid TSV drop, malformed CSV, unsupported extension,

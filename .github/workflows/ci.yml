@@ -138,7 +138,9 @@ jobs:
 
       - name: Run browser and WASM integration tests
         if: matrix.suite == 'browser'
-        run: nsh test --target web --browser /usr/bin/google-chrome
+        env:
+          ROWTATION_BROWSER: /usr/bin/google-chrome
+        run: scripts/test-browser.sh
 
       - name: Run local file workflows
         if: matrix.suite == 'browser'

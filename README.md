@@ -136,7 +136,7 @@ nsh run --target web                 # Develop in the browser
 nsh check                            # Check Rust and generated TSX types
 nsh build                            # Validate and bundle TSX
 nsh test                             # Rust tests and headless UI tests
-nsh test --target web                 # Test with real browser input
+scripts/test-browser.sh               # Shared tests with real browser input
 nsh package --target web -o dist      # Build the deployable static website
 ```
 
