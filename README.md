@@ -70,6 +70,8 @@ stress tests and a native benchmark (`ROWTATION_BENCH_MB`, default 64).
 
 See [architecture and API contracts](docs/architecture.md) for Rust/TSX usage,
 identity, error and disposal rules.
+See the [2-million-row production profile](docs/scroll-performance.md) for measured
+cache/Inspector costs and the remaining NSH scaled-scroll limitation.
 
 ## Development
 

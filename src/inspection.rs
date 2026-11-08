@@ -224,6 +224,7 @@ pub(crate) struct ProfileJob {
     index: usize,
     next: usize,
     table: HashTable<(u64, u32, u32)>,
+    common: Vec<(u32, u32)>,
     empty: u32,
     missing: u32,
 }
@@ -235,6 +236,7 @@ impl ProfileJob {
             index,
             next: 0,
             table: HashTable::new(),
+            common: Vec::with_capacity(COMMON_VALUES + 1),
             empty: 0,
             missing: 0,
         }
@@ -267,35 +269,45 @@ impl ProfileJob {
                 self.empty += 1;
             }
             let hash = FxBuildHasher.hash_one(value.as_str());
-            match self.table.entry(
+            let candidate = match self.table.entry(
                 hash,
                 |&(h, row, _)| h == hash && text(row) == value,
                 |&(h, _, _)| h,
             ) {
-                Entry::Occupied(mut entry) => entry.get_mut().2 += 1,
+                Entry::Occupied(mut entry) => {
+                    let entry = entry.get_mut();
+                    entry.2 += 1;
+                    (entry.1, entry.2)
+                }
                 Entry::Vacant(entry) => {
                     entry.insert((hash, position as u32, 1));
+                    (position as u32, 1)
                 }
+            };
+            if value.is_empty() {
+                continue;
+            }
+            // Maintain the five leaders within this slice. A final walk over all
+            // distinct values can otherwise block the browser long after counting.
+            let order = |a: &(u32, u32), b: &(u32, u32)| {
+                b.1.cmp(&a.1).then_with(|| text(a.0).cmp(text(b.0)))
+            };
+            if let Some(at) = self.common.iter().position(|item| item.0 == candidate.0) {
+                self.common.remove(at);
+            }
+            if self.common.len() < COMMON_VALUES
+                || order(&candidate, &self.common[COMMON_VALUES - 1]).is_lt()
+            {
+                let at = self
+                    .common
+                    .partition_point(|item| order(item, &candidate).is_lt());
+                self.common.insert(at, candidate);
+                self.common.truncate(COMMON_VALUES);
             }
         }
         self.next = end;
         if end < rows.len() {
             return None;
-        }
-        // Keep the five best by count, then text, while walking the table once. The
-        // order is total over distinct texts, so table order cannot change the result.
-        let order = |a: &(&str, u32), b: &(&str, u32)| b.1.cmp(&a.1).then_with(|| a.0.cmp(b.0));
-        let mut top: Vec<(&str, u32)> = Vec::with_capacity(COMMON_VALUES + 1);
-        for &(_, row, count) in &self.table {
-            let candidate = (text(row), count);
-            if candidate.0.is_empty()
-                || top.len() == COMMON_VALUES && order(&candidate, &top[COMMON_VALUES - 1]).is_ge()
-            {
-                continue;
-            }
-            let at = top.partition_point(|item| order(item, &candidate).is_lt());
-            top.insert(at, candidate);
-            top.truncate(COMMON_VALUES);
         }
         Some(ColumnProfile {
             column_id: self.column_id,
@@ -303,9 +315,11 @@ impl ProfileJob {
             unique_count: saturating_u32(self.table.len()),
             empty_count: self.empty,
             missing_count: self.missing,
-            common_values: top
-                .into_iter()
-                .map(|(value, count)| {
+            common_values: self
+                .common
+                .iter()
+                .map(|&(row, count)| {
+                    let value = text(row);
                     let shown = prefix(value, FREQUENT_VALUE_PREVIEW_BYTES);
                     FrequentValue {
                         value: shown.into(),
