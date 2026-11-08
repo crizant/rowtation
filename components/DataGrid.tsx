@@ -1,8 +1,8 @@
-import { computed, effect, platform, signal, Text, View, windowSize } from "nsh";
+import { computed, effect, platform, signal, untracked, Text, View, windowSize } from "nsh";
 import { DataTable, type DataTableCell, type DataTableRange, type DataTableRef, type DataTableSort, type DataTableSelection } from "nsh/base";
 import type { CellSnapshot, ColumnMetadata, DocumentMetadata, DocumentSession, RowWindow } from "rowtation/native";
 import { measuring, record, timeToNextFrame } from "./diagnostics";
-import { loadGridRows, PREVIEW_BYTES, utf8Span } from "./gridRowCache";
+import { loadGridRows, PREVIEW_BYTES, updateGridHighlights, utf8Span } from "./gridRowCache";
 export { cellText, PREVIEW_BYTES } from "./gridRowCache";
 
 export interface CellSelection {
@@ -19,6 +19,7 @@ export function DataGrid(props: {
   metadata: DocumentMetadata;
   columns: ColumnMetadata[];
   version: number;
+  searchVersion: number;
   selected: CellSelection | null;
   sort: DataTableSort | null;
   onSort: (sort: DataTableSort | null) => void;
@@ -45,6 +46,7 @@ export function DataGrid(props: {
   // This cache lives with the grid; document/revision and column changes invalidate reuse.
   const cache = signal(loadGridRows(null, props.metadata, props.columns, visibleRows, visibleColumns, fetch));
   const rows = () => cache().snapshot;
+  const tableData = computed(() => cache().data);
   function load() {
     const previous = cache();
     const next = loadGridRows(previous, props.metadata, props.columns, visibleRows, visibleColumns, fetch);
@@ -70,9 +72,25 @@ export function DataGrid(props: {
   props.onReady(() => table?.focus());
   const active = signal(props.activeMatch ?? null);
   effect(() => { active.set(props.activeMatch ?? null); });
+  let loadedVersion = props.version;
   effect(() => {
-    props.version;
-    cache.set(loadGridRows(null, props.metadata, props.columns, visibleRows, visibleColumns, fetch));
+    const next = props.version;
+    if (next === loadedVersion) return;
+    loadedVersion = next;
+    untracked(() => cache.set(loadGridRows(null, props.metadata, props.columns, visibleRows, visibleColumns, fetch)));
+  });
+  let loadedSearch = props.searchVersion;
+  effect(() => {
+    const next = props.searchVersion;
+    if (next === loadedSearch) return;
+    loadedSearch = next;
+    untracked(() => {
+      const previous = cache();
+      const flags = props.session.searchHighlights({ offset: previous.snapshot.offset, limit: previous.snapshot.rows.length,
+        columnOffset: previous.snapshot.columnOffset, columnLimit: previous.columnEnd - previous.snapshot.columnOffset });
+      const updated = updateGridHighlights(previous, flags);
+      if (updated !== previous) cache.set(updated);
+    });
   });
   effect(() => {
     const cell = props.selected;
@@ -89,13 +107,19 @@ export function DataGrid(props: {
   const highlights = computed(() => cache().snapshot.rows.some(row => row.cells.some(cell => cell.matched)));
   const renderCell = (cell: DataTableCell) => <GridCell text={cell.text} row={cell.row} column={cell.column} />;
   function GridCell(cell: { text: string; row: number; column: number }) {
-    // Overlapping cache windows reuse snapshots. Only this memo subscribes to
-    // the whole cache; unchanged cells do not reapply text, spans or styles.
-    const snapshot = computed(() => {
+    // Plain cells need only one boolean subscription. Do not allocate a View,
+    // snapshot memo and active-range memo for every nonmatching desktop cell.
+    const matched = computed(() => !!cache().snapshot.rows[cell.row - cache().snapshot.offset]?.cells[cell.column - cache().snapshot.columnOffset]?.matched);
+    return <If when={matched() || !platform.desktop}
+      else={<Text class="text-[13px] text-foreground line-clamp-1">{cell.text}</Text>}>
+      <HighlightedCell text={cell.text} row={cell.row} column={cell.column} matched={matched()} />
+    </If>;
+  }
+  function HighlightedCell(cell: { text: string; row: number; column: number; matched: boolean }) {
+    const snapshot = () => {
       const current = cache().snapshot;
       return current.rows[cell.row - current.offset]?.cells[cell.column - current.columnOffset];
-    });
-    const matched = computed(() => !!snapshot()?.matched);
+    };
     const occurrence = computed(() => {
       const mark = active();
       if (!mark || mark.row !== cell.row || mark.column !== cell.column) return null;
@@ -103,10 +127,10 @@ export function DataGrid(props: {
       const split = utf8Span(snap?.text ?? snap?.number ?? (snap?.boolean == null ? "" : String(snap.boolean)), mark.start, mark.end);
       return split?.hit ? { ...split, after: split.after + (snap?.truncated ? "…" : "") } : null;
     });
-    return <View testID={matched() ? "search-highlight" : "grid-custom-cell"}
+    return <View testID={cell.matched ? "search-highlight" : "grid-custom-cell"}
       onLongPress={() => props.onCellMenu(cell.row, cell.column, 16, 120)}
       style={{ height: dense() ? 30 : 40, width: columnWidth() - 24 }}
-      class={"justify-center rounded" + (matched() ? " bg-primary/15" : "")}>
+      class={"justify-center rounded" + (cell.matched ? " bg-primary/15" : "")}>
       <If when={occurrence()} else={<Text class="text-[13px] text-foreground line-clamp-1">{cell.text}</Text>}>
         {split => <Text class="text-[13px] text-foreground line-clamp-1">{split().before}<Text
           testID="active-match" class="rounded-sm bg-primary/50 text-foreground underline"
@@ -120,7 +144,7 @@ export function DataGrid(props: {
     onDoublePress={e => { if (e.target.row != null && e.target.column != null) props.onEdit(e.target.row, e.target.column); }}
     onContextMenu={e => { if (e.row != null && e.column != null) props.onCellMenu(e.row, e.column, e.x, e.y); }}
     columns={props.columns.map((column) => ({ key: String(column.id), sortable: true, title: column.name || "(unnamed)", width: columnWidth() }))}
-    data={cache().data} dataStart={rows().offset} rowCount={props.metadata.rowCount}
+    data={tableData()} dataStart={rows().offset} rowCount={props.metadata.rowCount}
     rowHeight={dense() ? 34 : 44} headerHeight={dense() ? 36 : 44} fontSize={13} rowHeader cellSelectable columnSelectable rowSelectable={false}
     movableColumns={false} resizableColumns={false} selectOnModifierPress={false} stripe={false} selection={selection()}
     onVisibleRowsChange={e => { visibleRows = e.range; load(); }}

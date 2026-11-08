@@ -46,10 +46,13 @@ function EditInput(props: { value: string; onChange: (value: string) => void; on
 }
 
 function DocumentView(props: { document: OpenDocument; onClose: () => void }) {
-  cleanup(() => props.document.dispose());
-  const metadata = signal(props.document.metadata);
+  // This list item's reactive prop may already be gone when its owner cleans up.
+  const document = props.document;
+  let alive = true;
+  const metadata = signal(document.metadata);
   const version = signal(0);
-  const edits = signal(props.document.session.editStatus());
+  const searchVersion = signal(0);
+  const edits = signal(document.session.editStatus());
   const sorting = signal<import("nsh/base").DataTableSort | null>(null);
   const finding = signal(false);
   const replacing = signal(false);
@@ -66,6 +69,8 @@ function DocumentView(props: { document: OpenDocument; onClose: () => void }) {
   const activeSnippet = signal("");
   const querySelection = signal<{ start: number; end: number } | undefined>(undefined);
   const pending = signal(false);
+  const searchProgress = signal<number | null>(null);
+  const searchCancelled = signal(false);
   const operationError = signal("");
   const notice = signal("");
   const exporting = signal(false);
@@ -76,10 +81,22 @@ function DocumentView(props: { document: OpenDocument; onClose: () => void }) {
   let selectQuery = false;
   let searchTimer: ReturnType<typeof setTimeout> | undefined;
   let focusTimer: ReturnType<typeof setTimeout> | undefined;
+  let searchGeneration = 0;
   let appliedKey = "";
   let held: { rowId: number; columnId: number; start: number } | null = null;
   let heldIndex = 0;
-  cleanup(() => { clearTimeout(searchTimer); clearTimeout(focusTimer); });
+  let run = 0;
+  let profileTimer: ReturnType<typeof setTimeout> | undefined;
+  let copied: ReturnType<typeof setTimeout> | undefined;
+  function disposeDocument() {
+    if (!alive) return;
+    alive = false;
+    searchGeneration++; run++;
+    clearTimeout(searchTimer); clearTimeout(focusTimer); clearTimeout(profileTimer); clearTimeout(copied);
+    // Dropping the session also drops its dataset, profiles and unfinished search.
+    document.dispose();
+  }
+  cleanup(disposeDocument);
   const selection = signal<CellSelection | null>(null);
   const column = signal<ColumnMetadata | null>(null);
   const profile = signal<ColumnProfile | null>(null);
@@ -89,8 +106,6 @@ function DocumentView(props: { document: OpenDocument; onClose: () => void }) {
   const copyLabel = signal("Copy value");
   const wide = () => windowSize().width >= 900;
   // Profiling runs in slices between frames; each new column or disposal ends the previous run.
-  let run = 0;
-  cleanup(() => run++);
   function ensureProfile() {
     const target = column();
     if (!target || profile()?.columnId === target.id || progress() != null) return;
@@ -98,9 +113,9 @@ function DocumentView(props: { document: OpenDocument; onClose: () => void }) {
     let budget = 50_000, slices = 0, blocked = 0, longest = 0;
     const began = performance.now();
     const step = () => {
-      if (id !== run) return;
+      if (!alive || id !== run) return;
       const started = performance.now();
-      const result = props.document.session.profileStep(target.id, budget);
+      const result = document.session.profileStep(target.id, budget);
       const elapsed = performance.now() - started;
       slices++; blocked += elapsed; longest = Math.max(longest, elapsed);
       // Aim for about 12 ms of counting per slice so input and painting stay responsive.
@@ -109,14 +124,15 @@ function DocumentView(props: { document: OpenDocument; onClose: () => void }) {
         profile.set(result.profile); progress.set(null);
         record("Column profile", performance.now() - began, `${slices} slices, longest ${longest.toFixed(1)} ms, counting ${blocked.toFixed(1)} ms`);
       }
-      else { progress.set(result.total ? result.scanned / result.total : 0); setTimeout(step, 0); }
+      else { progress.set(result.total ? result.scanned / result.total : 0); profileTimer = setTimeout(step, 0); }
     };
     step();
   }
   /** Stop an unfinished scan and release it in Rust; finished profiles stay cached. */
   function stopProfile() {
     run++;
-    if (progress() != null) props.document.session.cancelProfile();
+    clearTimeout(profileTimer);
+    if (progress() != null) document.session.cancelProfile();
     progress.set(null);
   }
   /** Closing the narrow-screen inspector abandons its scan; the side panel keeps it. */
@@ -129,7 +145,7 @@ function DocumentView(props: { document: OpenDocument; onClose: () => void }) {
     if (column()?.id === columnId) return;
     stopProfile();
     profile.set(null);
-    column.set(props.document.columns.find(item => item.id === columnId) ?? null);
+    column.set(document.columns.find(item => item.id === columnId) ?? null);
     if (wide() || info()) ensureProfile();
   }
   function openInfo() { info.set(true); ensureProfile(); }
@@ -138,28 +154,29 @@ function DocumentView(props: { document: OpenDocument; onClose: () => void }) {
     const cell = selection();
     if (!cell) return null;
     if (!cell.preview.truncated) return cell.preview.text ?? cell.preview.number ?? (cell.preview.boolean == null ? "" : String(cell.preview.boolean));
-    const value = timed("Read whole value", () => props.document.session.readCell(cell.rowId, cell.columnId), () => bytes(cell.preview.byteLength));
+    const value = timed("Read whole value", () => document.session.readCell(cell.rowId, cell.columnId), () => bytes(cell.preview.byteLength));
     return value.text ?? value.number ?? (value.boolean == null ? "" : String(value.boolean));
   }
   function showValue() { closeInfo(); full.set(wholeValue()); }
-  let copied: number | undefined;
-  cleanup(() => clearTimeout(copied));
   async function copyValue() {
     const text = full() ?? wholeValue();
     if (text == null) return;
     try { await Clipboard.writeText(text); copyLabel.set("Copied"); } catch { copyLabel.set("Copy failed"); }
+    if (!alive) return;
     clearTimeout(copied);
     copied = setTimeout(() => copyLabel.set("Copy value"), 1500);
   }
   function attempt(action: () => void) {
+    if (!alive) return;
     operationError.set(""); notice.set("");
     try { action(); } catch (cause) { operationError.set(cause instanceof Error ? cause.message : String(cause)); }
   }
   function refresh() {
-    metadata.set(props.document.session.metadata());
-    edits.set(props.document.session.editStatus());
+    version.set(version() + 1);
+    metadata.set(document.session.metadata());
+    edits.set(document.session.editStatus());
     const current = selection();
-    if (current) selection.set({ ...current, rowIndex: props.document.session.rowPosition(current.rowId), preview: props.document.session.readCell(current.rowId, current.columnId) });
+    if (current) selection.set({ ...current, rowIndex: document.session.rowPosition(current.rowId), preview: document.session.readCell(current.rowId, current.columnId) });
     stopProfile(); profile.set(null);
     if (wide() || info()) ensureProfile();
     runSearch(finding());
@@ -170,13 +187,13 @@ function DocumentView(props: { document: OpenDocument; onClose: () => void }) {
   function resolveIndex(count: number) {
     const fallback = Math.min(heldIndex, Math.max(count - 1, 0));
     if (!held || count < 1) return fallback;
-    return props.document.session.searchIndex(held.rowId, held.columnId, held.start, heldIndex) ?? fallback;
+    return document.session.searchIndex(held.rowId, held.columnId, held.start, heldIndex) ?? fallback;
   }
   function showSnippet(index: number) {
-    activeSnippet.set(props.document.session.searchSnippet(index, PREVIEW_BYTES) ?? "");
+    activeSnippet.set(document.session.searchSnippet(index, PREVIEW_BYTES) ?? "");
   }
   function remember(index: number) {
-    const match = props.document.session.searchMatch(index);
+    const match = document.session.searchMatch(index);
     if (!match) return null;
     heldIndex = index;
     held = { rowId: match.rowId, columnId: match.columnId, start: match.start };
@@ -185,46 +202,80 @@ function DocumentView(props: { document: OpenDocument; onClose: () => void }) {
     return match;
   }
   function runSearch(reveal = true, mode: "preserve" | "restart" = "preserve") {
-    clearTimeout(searchTimer);
-    searchTimer = undefined;
-    pending.set(false);
+    cancelSearch();
+    const generation = searchGeneration;
     const activeTerm = finding() ? term() : "";
+    const key = queryKey();
+    const began = performance.now();
+    let slices = 0, longest = 0, blocked = 0;
+    function fail(cause: unknown) {
+      pending.set(false);
+      appliedKey = key;
+      operationError.set(cause instanceof Error ? cause.message : String(cause));
+      if (mode === "restart") { held = null; heldIndex = 0; }
+    }
+    const step = () => {
+      if (!alive || generation !== searchGeneration) return;
+      searchTimer = undefined;
+      try {
+        const started = performance.now();
+        const progress = document.session.searchStep();
+        const elapsed = performance.now() - started;
+        slices++; blocked += elapsed; longest = Math.max(longest, elapsed);
+        if (!progress.result) {
+          searchProgress.set(progress.total ? progress.scanned / progress.total : 0);
+          searchTimer = setTimeout(step, 0);
+          return;
+        }
+        const result = progress.result;
+        pending.set(false);
+        appliedKey = key;
+        operationError.set("");
+        results.set(result);
+        if (!result.count) {
+          if (mode === "restart" || !activeTerm) { held = null; heldIndex = 0; }
+        } else if (reveal) revealMatch(mode === "restart" ? 0 : resolveIndex(result.count));
+        else {
+          const index = mode === "restart" ? 0 : resolveIndex(result.count);
+          if (remember(index)) showSnippet(index);
+        }
+        if (result.count) searchVersion.set(searchVersion() + 1);
+        if (activeTerm) record("Search", performance.now() - began, `${slices} slices, longest ${longest.toFixed(1)} ms, scanning ${blocked.toFixed(1)} ms`);
+      } catch (cause) { fail(cause); }
+    };
     try {
-      const result = props.document.session.search({
+      document.session.startSearch({
         term: activeTerm,
         columnId: activeTerm && scoped() ? scopeId() : null,
-        caseSensitive: sensitive(),
-        regex: regex(),
+        caseSensitive: sensitive(), regex: regex(),
       });
-      appliedKey = queryKey();
-      operationError.set("");
-      results.set(result);
-      if (!result.count) {
-        matchIndex.set(0);
-        activeMatch.set(null);
-        activeSnippet.set("");
-        if (mode === "restart" || !activeTerm) { held = null; heldIndex = 0; }
-      } else if (reveal) revealMatch(mode === "restart" ? 0 : resolveIndex(result.count));
-      else {
-        const index = mode === "restart" ? 0 : resolveIndex(result.count);
-        if (remember(index)) showSnippet(index);
-      }
-    } catch (cause) {
-      results.set({ count: 0, current: null });
-      matchIndex.set(0);
-      activeMatch.set(null);
-      activeSnippet.set("");
-      if (mode === "restart") { held = null; heldIndex = 0; }
-      appliedKey = queryKey();
-      operationError.set(cause instanceof Error ? cause.message : String(cause));
-    }
-    version.set(version() + 1);
+      pending.set(!!activeTerm);
+      // Give input and rendering an event-loop turn before beginning the scan.
+      if (activeTerm) searchTimer = setTimeout(step, 0);
+      else step();
+    } catch (cause) { fail(cause); }
+  }
+  function cancelSearch() {
+    const hadHighlights = results().count > 0;
+    searchGeneration++;
+    appliedKey = "";
+    clearTimeout(searchTimer);
+    searchTimer = undefined;
+    document.session.cancelSearch();
+    pending.set(false);
+    searchProgress.set(null);
+    searchCancelled.set(false);
+    results.set({ count: 0, current: null });
+    matchIndex.set(0);
+    activeMatch.set(null);
+    activeSnippet.set("");
+    if (hadHighlights) searchVersion.set(searchVersion() + 1);
   }
   function queueSearch() {
-    clearTimeout(searchTimer);
+    cancelSearch();
     pending.set(true);
     operationError.set("");
-    searchTimer = setTimeout(() => { searchTimer = undefined; attempt(() => runSearch(true, "restart")); }, 180);
+    searchTimer = setTimeout(() => { if (!alive) return; searchTimer = undefined; attempt(() => runSearch(true, "restart")); }, 180);
   }
   function revealMatch(index: number) {
     if (pending()) return;
@@ -234,39 +285,40 @@ function DocumentView(props: { document: OpenDocument; onClose: () => void }) {
     const match = remember(next);
     if (!match) return;
     showSnippet(next);
-    const columnIndex = props.document.columns.findIndex(c => c.id === match.columnId);
+    const columnIndex = document.columns.findIndex(c => c.id === match.columnId);
     if (columnIndex < 0) return;
-    const row = props.document.session.rows({ offset: match.rowIndex, limit: 1, columnOffset: columnIndex, columnLimit: 1, previewBytes: PREVIEW_BYTES }).rows[0];
+    const row = document.session.rows({ offset: match.rowIndex, limit: 1, columnOffset: columnIndex, columnLimit: 1, previewBytes: PREVIEW_BYTES }).rows[0];
     const preview = row?.cells[0];
     if (!preview) return;
     select({ documentId: metadata().id, rowId: match.rowId, columnId: match.columnId, rowIndex: match.rowIndex, columnIndex, preview }, match.columnId);
   }
   function searchStatus() {
     if (!term()) return "";
-    if (pending()) return "Searching…";
+    if (pending()) return searchProgress() == null ? "Searching…" : `Searching… ${Math.floor(searchProgress()! * 100)}%`;
+    if (searchCancelled()) return "Search cancelled";
     if (operationError()) return "";
     if (!results().count) return "No matches";
     return `${matchIndex() + 1} of ${results().count} matches`;
   }
   function sort(next: import("nsh/base").DataTableSort | null) {
     attempt(() => {
-      props.document.session.sort(next ? Number(next.key) : null, next?.direction === "descending");
+      document.session.sort(next ? Number(next.key) : null, next?.direction === "descending");
       sorting.set(next); refresh();
     });
   }
-  function history(redo: boolean) { if (exporting()) return; attempt(() => { props.document.session.history(redo); refresh(); }); }
+  function history(redo: boolean) { if (exporting()) return; attempt(() => { document.session.history(redo); refresh(); }); }
   function beginEdit() { if (exporting()) return; if (selection()) { editDraft.set(wholeValue() ?? ""); editing.set(true); } }
   function editAt(rowIndex: number, columnIndex: number) {
-    const row = props.document.session.rows({ offset: rowIndex, limit: 1, columnOffset: columnIndex, columnLimit: 1 }).rows[0];
+    const row = document.session.rows({ offset: rowIndex, limit: 1, columnOffset: columnIndex, columnLimit: 1 }).rows[0];
     if (!row) return;
-    const columnId = props.document.columns[columnIndex].id;
+    const columnId = document.columns[columnIndex].id;
     select({ documentId: metadata().id, rowId: row.id, columnId, rowIndex, columnIndex, preview: row.cells[0] }, columnId);
     beginEdit();
   }
   function openCellMenu(rowIndex: number, columnIndex: number, x: number, y: number) {
-    const row = props.document.session.rows({ offset: rowIndex, limit: 1, columnOffset: columnIndex, columnLimit: 1 }).rows[0];
+    const row = document.session.rows({ offset: rowIndex, limit: 1, columnOffset: columnIndex, columnLimit: 1 }).rows[0];
     if (!row) return;
-    const columnId = props.document.columns[columnIndex].id;
+    const columnId = document.columns[columnIndex].id;
     select({ documentId: metadata().id, rowId: row.id, columnId, rowIndex, columnIndex, preview: row.cells[0] }, columnId);
     menuPoint.set({ x, y });
   }
@@ -281,7 +333,7 @@ function DocumentView(props: { document: OpenDocument; onClose: () => void }) {
         { id: "keep", label: "Keep editing", role: "cancel" },
         { id: "discard", label: "Discard changes", role: "destructive" },
       ],
-    }).then(result => { if (result.action === "discard") action(); });
+    }).then(result => { if (alive && result.action === "discard") action(); });
   }
   function focusQuery() {
     const input = findInput;
@@ -335,6 +387,7 @@ function DocumentView(props: { document: OpenDocument; onClose: () => void }) {
     blurEditor();
     clearTimeout(focusTimer);
     focusTimer = setTimeout(() => {
+      if (!alive) return;
       editing.set(false);
       after?.();
       focusGrid();
@@ -344,27 +397,28 @@ function DocumentView(props: { document: OpenDocument; onClose: () => void }) {
   function commitEdit(tab = false) {
     attempt(() => {
       const current = selection(); if (!current) return;
-      if (editDraft() !== wholeValue()) props.document.session.editCell(current.rowId, current.columnId, editDraft(), metadata().revision);
+      if (editDraft() !== wholeValue()) document.session.editCell(current.rowId, current.columnId, editDraft(), metadata().revision);
       const position = current.rowIndex * metadata().columnCount + current.columnIndex + 1;
       releaseEditor(() => {
         refresh();
         if (tab && metadata().columnCount) {
           const rowIndex = Math.floor(position / metadata().columnCount), columnIndex = position % metadata().columnCount;
           if (rowIndex < metadata().rowCount) {
-            const row = props.document.session.rows({ offset: rowIndex, limit: 1, columnOffset: columnIndex, columnLimit: 1 }).rows[0];
-            const columnId = props.document.columns[columnIndex].id;
+            const row = document.session.rows({ offset: rowIndex, limit: 1, columnOffset: columnIndex, columnLimit: 1 }).rows[0];
+            const columnId = document.columns[columnIndex].id;
             select({ documentId: metadata().id, rowId: row.id, columnId, rowIndex, columnIndex, preview: row.cells[0] }, columnId);
           }
         }
       });
     });
   }
-  function clearCell() { attempt(() => { const cell = selection(); if (cell) { props.document.session.editCell(cell.rowId, cell.columnId, "", metadata().revision); refresh(); } }); }
+  function clearCell() { attempt(() => { const cell = selection(); if (cell) { document.session.editCell(cell.rowId, cell.columnId, "", metadata().revision); refresh(); } }); }
   function replace(all: boolean) {
     attempt(() => {
-      if (searchTimer || queryKey() !== appliedKey) runSearch(true, "restart");
+      if (pending()) return;
+      if (queryKey() !== appliedKey) { runSearch(true, "restart"); return; }
       if (!results().count || operationError()) return;
-      const result = props.document.session.replaceMatches(all ? null : matchIndex(), replacement(), metadata().revision);
+      const result = document.session.replaceMatches(all ? null : matchIndex(), replacement(), metadata().revision);
       refresh(); notice.set(`${count(result.replacements, "replacement", "replacements")} in ${count(result.affectedCells, "cell", "cells")}`);
     });
   }
@@ -384,23 +438,23 @@ function DocumentView(props: { document: OpenDocument; onClose: () => void }) {
   });
   function scopeLabel() {
     if (!scoped()) return "All";
-    const name = props.document.columns.find(item => item.id === scopeId())?.name || "Column";
+    const name = document.columns.find(item => item.id === scopeId())?.name || "Column";
     return name.length > 14 ? `${name.slice(0, 13)}…` : name;
   }
   function gridMatch() {
     const match = activeMatch();
     if (!match || !results().count) return null;
-    const column = props.document.columns.findIndex(item => item.id === match.columnId);
+    const column = document.columns.findIndex(item => item.id === match.columnId);
     if (column < 0) return null;
     return { row: match.rowIndex, column, start: match.start, end: match.end };
   }
-  const format = () => props.document.metadata.format.toUpperCase() + " · UTF-8";
+  const format = () => document.metadata.format.toUpperCase() + " · UTF-8";
   const menuPopup = "min-w-44 overflow-hidden rounded-xl border border-border/70 bg-background p-1 shadow-lg";
   return <View class="relative flex-1 min-h-0 min-w-0 bg-background">
     <Toolbar accessibilityLabel="Document toolbar" class="min-h-14 shrink-0 flex-row items-center gap-2 border-b border-border/70 px-3 py-2 md:gap-3 md:px-4">
-      <Button label="Close document" quiet compact={platform.desktop} icon="caret-left" onPress={() => confirmDiscard(() => props.onClose())} testID="close-document" />
+      <Button label="Close document" quiet compact={platform.desktop} icon="caret-left" onPress={() => confirmDiscard(() => { disposeDocument(); props.onClose(); })} testID="close-document" />
       <View class={(wide() ? "flex-row items-center gap-2 " : "justify-center gap-0.5 ") + "min-w-0 flex-1"}>
-        <Text class="line-clamp-1 text-[15px] font-semibold text-foreground">{props.document.name}</Text>
+        <Text class="line-clamp-1 text-[15px] font-semibold text-foreground">{document.name}</Text>
         <If when={wide()}><Badge label={format()} /></If>
         <If when={!wide()}><Text class="line-clamp-1 text-[11px] font-medium text-muted-foreground">{format()}</Text></If>
       </View>
@@ -421,8 +475,9 @@ function DocumentView(props: { document: OpenDocument; onClose: () => void }) {
             <Button label="Next" icon="caret-right" quiet compact={wide()} disabled={pending() || !results().count} onPress={() => stepMatch(1)} />
           </View>
           <View class="flex-row flex-wrap items-center gap-2">
-            <Text testID="search-count" class={(wide() ? "shrink-0" : "min-w-0 flex-1") + " line-clamp-1 text-xs text-muted-foreground"}>{searchStatus()}</Text>
+            <Text testID="search-count" class={(wide() ? "shrink-0" : "min-w-32 flex-1") + " line-clamp-1 text-xs text-muted-foreground"}>{searchStatus()}</Text>
             <If when={activeSnippet()}><Text testID="active-match" class="max-w-36 line-clamp-1 text-xs font-medium text-foreground underline" style={{ textDecorationLine: "underline" }}>{activeSnippet()}</Text></If>
+            <If when={pending()}><Button label="Cancel search" quiet compact={wide()} onPress={() => { cancelSearch(); searchCancelled.set(true); }} /></If>
             <Button label="Aa" accessibilityLabel="Case sensitive" tight quiet compact={wide()} selected={sensitive()} tooltip="Case sensitive" onPress={() => toggleOption("case")} />
             <Button label=".*" accessibilityLabel="Regex" tight quiet compact={wide()} selected={regex()} tooltip="Regex" onPress={() => toggleOption("regex")} />
             <Button label={scopeLabel()} accessibilityLabel={scoped() ? "Selected column" : "All columns"} tight quiet compact={wide()} selected={scoped()} disabled={!column() && !scoped()} tooltip={scoped() ? "Selected column" : "All columns"} onPress={() => toggleOption("scope")} />
@@ -433,8 +488,8 @@ function DocumentView(props: { document: OpenDocument; onClose: () => void }) {
           <View class={wide() ? "flex-row items-center gap-2" : "gap-2"}>
             <View class="min-w-0 flex-1"><Input label="Replace with" placeholder="Replace with" testID="replace-input" value={replacement()} onChange={value => replacement.set(value)} /></View>
             <View class="flex-row items-center gap-2">
-              <Button label="Replace" quiet compact={wide()} disabled={!results().count || !!operationError()} onPress={() => replace(false)} />
-              <Button label="Replace all" compact={wide()} disabled={!results().count || !!operationError()} onPress={() => replace(true)} />
+              <Button label="Replace" quiet compact={wide()} disabled={pending() || !results().count || !!operationError()} onPress={() => replace(false)} />
+              <Button label="Replace all" compact={wide()} disabled={pending() || !results().count || !!operationError()} onPress={() => replace(true)} />
             </View>
           </View>
         </If>
@@ -446,11 +501,11 @@ function DocumentView(props: { document: OpenDocument; onClose: () => void }) {
     </If>
     <View class="flex-1 min-h-0 min-w-0 flex-row">
       <View class="flex-1 min-w-0 min-h-0">
-        <DataGrid session={props.document.session} metadata={metadata()} columns={props.document.columns} onSelect={select}
-          version={version()} selected={selection()} sort={sorting()} onSort={sort} onEdit={editAt} onCellMenu={openCellMenu} activeMatch={gridMatch()} onReady={focus => { focusGrid = focus; }} />
+        <DataGrid session={document.session} metadata={metadata()} columns={document.columns} onSelect={select}
+          version={version()} searchVersion={searchVersion()} selected={selection()} sort={sorting()} onSort={sort} onEdit={editAt} onCellMenu={openCellMenu} activeMatch={gridMatch()} onReady={focus => { focusGrid = focus; }} />
         <View class="shrink-0 min-h-9 flex-row items-center justify-between gap-3 border-t border-border/70 px-4 py-1.5">
           <View class="flex-1 min-w-0 flex-row flex-wrap items-center gap-x-4 gap-y-1">
-            <Text class="text-xs text-muted-foreground">{count(props.document.metadata.rowCount, "row", "rows")} · {count(props.document.metadata.columnCount, "column", "columns")}</Text>
+            <Text class="text-xs text-muted-foreground">{count(document.metadata.rowCount, "row", "rows")} · {count(document.metadata.columnCount, "column", "columns")}</Text>
             <If when={selection()}><Text class="text-xs text-muted-foreground">{`Row ${(selection()?.rowIndex ?? 0) + 1} · Column ${(selection()?.columnIndex ?? 0) + 1}`}</Text></If>
           </View>
           <Text testID="edit-status" class="text-xs text-muted-foreground">{edits().modifiedCells ? `${edits().modifiedCells} modified · Unsaved` : "Unmodified"}</Text>
@@ -477,7 +532,7 @@ function DocumentView(props: { document: OpenDocument; onClose: () => void }) {
         </View>
       </If>
     </View>
-    <If when={exporting()}><ExportDialog session={props.document.session} name={props.document.name} onClose={() => exporting.set(false)} /></If>
+    <If when={exporting()}><ExportDialog session={document.session} name={document.name} onClose={() => exporting.set(false)} /></If>
     <If when={info() && windowSize().width < 900}>
       <Dialog title="Column information" onClose={closeInfo}>
         <Scroll style={{ maxHeight: windowSize().height * 0.6 }} class="min-h-0"><Inspector column={column()} profile={profile()} metadata={metadata()} selection={selection()} progress={progress()}

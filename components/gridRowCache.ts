@@ -116,3 +116,17 @@ export function loadGridRows(
   }
   return { snapshot: { documentId: metadata.id, revision: metadata.revision, offset: start, columnOffset: columnStart, rows: snapshots }, columnEnd, data };
 }
+
+/** Refresh presentation flags only. Keep text/data identity and unchanged cells. */
+export function updateGridHighlights(previous: GridRowCache, flags: boolean[][]): GridRowCache {
+  let rows: RowsSnapshot["rows"] | null = null;
+  previous.snapshot.rows.forEach((row, r) => {
+    if (!row.cells.some((cell, c) => cell.matched !== (flags[r]?.[c] ?? false))) return;
+    rows ??= previous.snapshot.rows.slice();
+    rows[r] = { ...row, cells: row.cells.map((cell, c) => {
+      const matched = flags[r]?.[c] ?? false;
+      return matched === cell.matched ? cell : { ...cell, matched };
+    }) };
+  });
+  return rows ? { ...previous, snapshot: { ...previous.snapshot, rows } } : previous;
+}

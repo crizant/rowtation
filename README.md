@@ -68,10 +68,12 @@ from the same call; time from an update to the next animation frame (which exclu
 paint); and WebAssembly memory. They appear in the panel and console only. Nothing is recorded while it is off or sent anywhere.
 `cargo test --release --test stress -- --ignored --nocapture` runs the large-input
 stress tests and a native benchmark (`ROWTATION_BENCH_MB`, default 64, or
-`ROWTATION_BENCH_ROWS` for an exact row count). Sort and search in that
-benchmark run synchronously on the calling thread. They are not an import-size cap.
+`ROWTATION_BENCH_ROWS` for an exact row count). The native benchmark offers
+synchronous sort/search controls; the browser find bar executes search in
+cancellable slices with progress. See [search measurements](docs/search-performance.md).
+These are not import-size caps.
 Search also stops, with no partial matches, above 64 MiB of scoped text or
-100,000 matches ([issue #9](https://github.com/crizant/rowtation/issues/9)).
+100,000 matches.
 
 See [architecture and API contracts](docs/architecture.md) for Rust/TSX usage,
 identity, error and disposal rules.

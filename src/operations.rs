@@ -17,6 +17,7 @@ const MAX_MATCHES: usize = 100_000;
 pub(crate) struct Operations {
     pub order: Vec<usize>,
     sort: Option<(u32, bool)>,
+    search_job: Option<SearchJob>,
     pub matches: Vec<SearchMatch>,
     pub matching_cells: HashSet<(u32, u32)>,
     originals: HashMap<(u32, u32), CellValue>,
@@ -59,6 +60,27 @@ pub struct SearchMatch {
 pub struct SearchResult {
     pub count: u32,
     pub current: Option<SearchMatch>,
+}
+/// Progress counts completed view rows; partial matches are never published.
+#[derive(JsObject, Default)]
+pub struct SearchProgress {
+    pub scanned: u32,
+    pub total: u32,
+    /// Set only when the entire search has completed successfully.
+    pub result: Option<SearchResult>,
+}
+struct SearchJob {
+    regex: regex::Regex,
+    column: Option<usize>,
+    row: usize,
+    cell: usize,
+    offset: usize,
+    last_end: Option<usize>,
+    bytes: usize,
+    charged: bool,
+    found: Vec<SearchMatch>,
+    indexed: usize,
+    cells: HashSet<(u32, u32)>,
 }
 /// Counts describe occurrences, affected cells, and the resulting revision.
 #[derive(JsObject, Default)]
@@ -145,6 +167,7 @@ impl Operations {
         }
         self.sort = column.map(|c| (c, descending));
         self.reorder(doc);
+        self.search_job = None;
         self.matches.clear();
         self.matching_cells.clear();
         Ok(())
@@ -191,8 +214,24 @@ impl Operations {
         doc: &Document,
         options: SearchOptions,
     ) -> Result<SearchResult, EngineError> {
+        self.start_search(doc, options)?;
+        loop {
+            if let Some(result) = self.search_step(doc, f64::INFINITY)?.result {
+                return Ok(result);
+            }
+        }
+    }
+    pub fn cancel_search(&mut self) {
+        self.search_job = None;
         self.matches.clear();
         self.matching_cells.clear();
+    }
+    pub fn start_search(
+        &mut self,
+        doc: &Document,
+        options: SearchOptions,
+    ) -> Result<(), EngineError> {
+        self.cancel_search();
         let column_index = options
             .column_id
             .map(|id| {
@@ -203,7 +242,7 @@ impl Operations {
             })
             .transpose()?;
         if options.term.is_empty() {
-            return Ok(SearchResult::default());
+            return Ok(());
         }
         if options.term.len() > 4096 {
             return Err(error("SEARCH_LIMIT", "Search term exceeds 4096 bytes."));
@@ -219,69 +258,174 @@ impl Operations {
             .dfa_size_limit(1 << 20)
             .build()
             .map_err(|e| error("INVALID_REGEX", &e.to_string()))?;
-        let mut found = Vec::new();
-        let mut scanned = 0usize;
-        for (position, &index) in self.order.iter().enumerate() {
-            let row = &doc.rows[index];
-            let mut scan = |column: usize, cell: &CellValue| -> Result<(), EngineError> {
-                let Some(value) = text(cell) else {
-                    return Ok(());
-                };
-                // Only bytes actually searched consume the payload budget. Null,
-                // Missing and implicit sparse gaps contribute nothing; empty Text
-                // is still searched (and zero-width matches have their own cap).
-                scanned = scanned.saturating_add(value.len());
-                if scanned > 64 * 1024 * 1024 {
-                    return Err(error(
-                        "SEARCH_LIMIT",
-                        "Search scope exceeds 64 MiB. Select a smaller column.",
-                    ));
+        self.search_job = Some(SearchJob {
+            regex,
+            column: column_index,
+            row: 0,
+            cell: 0,
+            offset: 0,
+            last_end: None,
+            bytes: 0,
+            charged: false,
+            found: std::mem::take(&mut self.matches),
+            indexed: 0,
+            cells: std::mem::take(&mut self.matching_cells),
+        });
+        Ok(())
+    }
+    /// Cooperatively scan for the requested milliseconds. A single regex search
+    /// is atomic; deadlines are checked between cells and occurrences, not by
+    /// truncating haystacks (which would change anchors and greedy matches).
+    pub fn search_step(
+        &mut self,
+        doc: &Document,
+        milliseconds: f64,
+    ) -> Result<SearchProgress, EngineError> {
+        let total = doc.row_count() as u32;
+        let Some(mut job) = self.search_job.take() else {
+            return Ok(SearchProgress {
+                scanned: total,
+                total,
+                result: Some(SearchResult {
+                    count: self.matches.len() as u32,
+                    current: self.matches.first().cloned(),
+                }),
+            });
+        };
+        let deadline = crate::diagnostics::now_ms() + milliseconds.max(0.0);
+        let mut work = 0usize;
+        while job.row < doc.row_count() {
+            // Amortize clock/bridge costs while bounding even empty/sparse rows.
+            if work >= 64 {
+                work = 0;
+                if milliseconds.is_finite() && crate::diagnostics::now_ms() >= deadline {
+                    let scanned = job.row as u32;
+                    self.search_job = Some(job);
+                    return Ok(SearchProgress {
+                        scanned,
+                        total,
+                        result: None,
+                    });
                 }
-                for m in regex.find_iter(value) {
-                    if found.len() >= MAX_MATCHES {
+            }
+            work += 1;
+            let row = &doc.rows[self.order.get(job.row).copied().unwrap_or(job.row)];
+            let entry = if let Some(column) = job.column {
+                if job.cell == 0 {
+                    row.cells.get(column).map(|v| (column, v))
+                } else {
+                    None
+                }
+            } else {
+                match &row.cells {
+                    RowCells::Dense(values) => values.get(job.cell).map(|v| (job.cell, v)),
+                    RowCells::Sparse(values) => values.get(job.cell).map(|(c, v)| (*c, v)),
+                }
+            };
+            let Some((column, cell)) = entry else {
+                job.row += 1;
+                job.cell = 0;
+                continue;
+            };
+            if let Some(value) = text(cell) {
+                if !job.charged {
+                    job.charged = true;
+                    job.bytes = job.bytes.saturating_add(value.len());
+                    if job.bytes > 64 * 1024 * 1024 {
+                        return Err(error(
+                            "SEARCH_LIMIT",
+                            "Search scope exceeds 64 MiB. Select a smaller column.",
+                        ));
+                    }
+                }
+                let resumed = job.last_end.is_some();
+                let mut iter = (!resumed).then(|| job.regex.find_iter(value));
+                loop {
+                    if work >= 64 {
+                        work = 0;
+                        if milliseconds.is_finite() && crate::diagnostics::now_ms() >= deadline {
+                            let scanned = job.row as u32;
+                            drop(iter);
+                            self.search_job = Some(job);
+                            return Ok(SearchProgress {
+                                scanned,
+                                total,
+                                result: None,
+                            });
+                        }
+                    }
+                    work += 1;
+                    let m = if resumed {
+                        if job.offset > value.len() {
+                            None
+                        } else {
+                            job.regex.find_at(value, job.offset)
+                        }
+                    } else {
+                        iter.as_mut().unwrap().next()
+                    };
+                    let Some(m) = m else { break };
+                    // find_iter already handles adjacent empty matches. On a
+                    // resumed cell, preserve its end sentinel and UTF-8 advance.
+                    if resumed && m.is_empty() && job.last_end == Some(m.end()) {
+                        job.offset =
+                            m.end() + value[m.end()..].chars().next().map_or(1, char::len_utf8);
+                        continue;
+                    }
+                    if job.found.len() >= MAX_MATCHES {
                         return Err(error(
                             "SEARCH_LIMIT",
                             "More than 100,000 matches. Narrow the search.",
                         ));
                     }
-                    found.push(SearchMatch {
+                    job.found.push(SearchMatch {
                         row_id: row.id(),
                         column_id: doc.columns()[column].id(),
                         start: m.start() as u32,
                         end: m.end() as u32,
                         revision: doc.revision(),
-                        row_index: position as u32,
+                        row_index: job.row as u32,
                     });
-                }
-                Ok(())
-            };
-            if let Some(column) = column_index {
-                // One direct dense lookup or one sparse binary search per row.
-                if let Some(value) = row.cells.get(column) {
-                    scan(column, value)?;
-                }
-            } else {
-                match &row.cells {
-                    RowCells::Dense(values) => {
-                        for (column, value) in values.iter().enumerate() {
-                            scan(column, value)?;
-                        }
-                    }
-                    RowCells::Sparse(values) => {
-                        // Sparse entries are stored in schema order. Never walk
-                        // the schema or materialize Missing cells for this row.
-                        for (column, value) in values {
-                            scan(*column, value)?;
-                        }
-                    }
+                    job.offset = m.end();
+                    job.last_end = Some(m.end());
                 }
             }
+            job.cell += 1;
+            job.offset = 0;
+            job.last_end = None;
+            job.charged = false;
         }
-        self.matching_cells = found.iter().map(|m| (m.row_id, m.column_id)).collect();
-        self.matches = found;
-        Ok(SearchResult {
-            count: self.matches.len() as u32,
-            current: self.matches.first().cloned(),
+        // Reserve once, as the original collect did. Indexing is also sliced;
+        // publishing never hides a second O(matches) pass in the final frame.
+        if job.indexed == 0 {
+            job.cells.reserve(job.found.len());
+        }
+        while job.indexed < job.found.len() {
+            if work >= 64 {
+                work = 0;
+                if milliseconds.is_finite() && crate::diagnostics::now_ms() >= deadline {
+                    self.search_job = Some(job);
+                    return Ok(SearchProgress {
+                        scanned: total,
+                        total,
+                        result: None,
+                    });
+                }
+            }
+            work += 1;
+            let m = &job.found[job.indexed];
+            job.cells.insert((m.row_id, m.column_id));
+            job.indexed += 1;
+        }
+        self.matches = job.found;
+        self.matching_cells = job.cells;
+        Ok(SearchProgress {
+            scanned: total,
+            total,
+            result: Some(SearchResult {
+                count: self.matches.len() as u32,
+                current: self.matches.first().cloned(),
+            }),
         })
     }
     pub fn match_at(&self, index: u32) -> Option<SearchMatch> {
@@ -500,6 +644,7 @@ impl Operations {
         }
         doc.revision = revision;
         doc.dirty = !self.originals.is_empty();
+        self.search_job = None;
         self.matches.clear();
         self.matching_cells.clear();
         if self
@@ -560,6 +705,158 @@ mod tests {
     use super::*;
     fn compare(a: &CellValue, b: &CellValue) -> Ordering {
         compare_keyed(a, b, numeric_key(a).as_ref(), numeric_key(b).as_ref())
+    }
+    #[test]
+    fn sliced_search_matches_find_iter_including_resumed_utf8_and_empty_ranges() {
+        let value = "a雪 café CAFÉ\n".repeat(1500);
+        let input = format!("value\n\"{}\"", value);
+        let doc = crate::formats::delimited::parse(input.as_bytes(), ",", true).unwrap();
+        for pattern in [
+            "a*",
+            ".*",
+            "(?s).*",
+            "^|$",
+            "(?m)^|$",
+            "\\b",
+            "雪|café",
+            "a|",
+            "(?:)",
+        ] {
+            let regex = RegexBuilder::new(pattern)
+                .case_insensitive(true)
+                .build()
+                .unwrap();
+            let expected = regex
+                .find_iter(&value)
+                .map(|m| (m.start() as u32, m.end() as u32))
+                .collect::<Vec<_>>();
+            let mut ops = Operations::default();
+            ops.start_search(
+                &doc,
+                SearchOptions {
+                    term: pattern.into(),
+                    regex: Some(true),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+            let mut previous = 0;
+            loop {
+                let progress = ops.search_step(&doc, 0.0).unwrap();
+                assert!(progress.scanned >= previous);
+                previous = progress.scanned;
+                if let Some(result) = progress.result {
+                    assert_eq!(result.count as usize, expected.len(), "{pattern}");
+                    break;
+                }
+                assert!(ops.matches.is_empty());
+                assert!(ops.matching_cells.is_empty());
+            }
+            assert_eq!(
+                ops.matches
+                    .iter()
+                    .map(|m| (m.start, m.end))
+                    .collect::<Vec<_>>(),
+                expected,
+                "{pattern}"
+            );
+            assert!(ops.matching_cells.contains(&(1, 1)));
+        }
+    }
+    #[test]
+    fn cancellation_restart_sort_and_mutation_discard_partial_search() {
+        let input = format!("value\n{}", "hit hit\n".repeat(50_000));
+        let mut doc = crate::formats::delimited::parse(input.as_bytes(), ",", true).unwrap();
+        let mut ops = Operations::default();
+        let options = || SearchOptions {
+            term: "hit".into(),
+            ..Default::default()
+        };
+        ops.start_search(&doc, options()).unwrap();
+        assert!(ops.search_step(&doc, 0.0).unwrap().result.is_none());
+        assert!(!ops.search_job.as_ref().unwrap().found.is_empty());
+        ops.cancel_search();
+        assert!(ops.search_job.is_none());
+        assert_eq!(ops.search_step(&doc, 0.0).unwrap().result.unwrap().count, 0);
+        ops.start_search(&doc, options()).unwrap();
+        ops.search_step(&doc, 0.0).unwrap();
+        ops.start_search(
+            &doc,
+            SearchOptions {
+                term: "absent".into(),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            ops.search_step(&doc, f64::INFINITY)
+                .unwrap()
+                .result
+                .unwrap()
+                .count,
+            0
+        );
+        ops.start_search(&doc, options()).unwrap();
+        ops.search_step(&doc, 0.0).unwrap();
+        ops.sort(&doc, Some(1), true).unwrap();
+        assert!(ops.search_job.is_none());
+        ops.start_search(&doc, options()).unwrap();
+        ops.search_step(&doc, 0.0).unwrap();
+        ops.edit(&mut doc, 1, 1, "changed".into(), 0).unwrap();
+        assert!(ops.search_job.is_none());
+        assert!(ops.matches.is_empty());
+        assert_eq!(ops.search(&doc, options()).unwrap().count, 99_998);
+        ops.start_search(&doc, options()).unwrap();
+        assert!(
+            ops.start_search(
+                &doc,
+                SearchOptions {
+                    term: "[".into(),
+                    regex: Some(true),
+                    ..Default::default()
+                }
+            )
+            .is_err()
+        );
+        assert!(ops.search_job.is_none());
+        assert!(ops.matches.is_empty());
+    }
+    #[test]
+    fn slices_charge_each_cell_once_and_limits_never_publish_partial_hits() {
+        // Many slices within a single cell must not count its payload repeatedly.
+        let input = format!("value\n{}", "a".repeat(100_000));
+        let doc = crate::formats::delimited::parse(input.as_bytes(), ",", true).unwrap();
+        let mut ops = Operations::default();
+        let options = || SearchOptions {
+            term: "a".into(),
+            ..Default::default()
+        };
+        ops.start_search(&doc, options()).unwrap();
+        loop {
+            let progress = ops.search_step(&doc, 0.0).unwrap();
+            if let Some(job) = &ops.search_job {
+                assert_eq!(job.bytes, 100_000);
+            }
+            if let Some(result) = progress.result {
+                assert_eq!(result.count, 100_000);
+                break;
+            }
+        }
+        let input = format!("value\n{}", "a".repeat(100_001));
+        let doc = crate::formats::delimited::parse(input.as_bytes(), ",", true).unwrap();
+        ops.start_search(&doc, options()).unwrap();
+        loop {
+            match ops.search_step(&doc, 0.0) {
+                Ok(progress) => assert!(progress.result.is_none()),
+                Err(error) => {
+                    assert_eq!(error.code(), "SEARCH_LIMIT");
+                    break;
+                }
+            }
+        }
+        assert!(ops.search_job.is_none());
+        assert!(ops.matches.is_empty());
+        assert!(ops.matching_cells.is_empty());
     }
     #[test]
     fn search_budget_counts_searchable_payload_only_at_the_boundary() {

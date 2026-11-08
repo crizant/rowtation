@@ -28,7 +28,7 @@ if (args.check) {
   console.log('Profile budget and exact results passed');
   process.exit(0);
 }
-if (!args.build || !args.csv || !args.out) throw new Error('Usage: node scripts/profile-scroll.mjs --build <production-directory> --csv <fixture.csv> --out <result.json> [--instrument] [--trace] [--cpu] [--search] [--dpr 2] [--browser <Chrome/Brave>]');
+if (!args.build || !args.csv || !args.out) throw new Error('Usage: node scripts/profile-scroll.mjs --build <production-directory> --csv <fixture.csv> --out <result.json> [--instrument] [--trace] [--cpu] [--search | --search-absent] [--dpr 2] [--browser <Chrome/Brave>]');
 const root = resolve(args.build), dataset = resolve(args.csv), output = resolve(args.out);
 const browser = args.browser ?? '/Applications/Brave Browser.app/Contents/MacOS/Brave Browser';
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -62,8 +62,8 @@ async function until(expression, timeout = 120000) {
   while (Date.now() < end) { if (await evaluate(expression)) return; await sleep(100); }
   throw new Error('Timed out: ' + expression);
 }
-async function click(text) {
-  const p = await evaluate(`(()=>{const el=[...document.querySelectorAll('[role="button"], .nsh-run')].find(el=>el.getAttribute('aria-label')===${JSON.stringify(text)}||el.textContent.trim()===${JSON.stringify(text)});if(!el)return null;const r=el.getBoundingClientRect();return{x:r.x+r.width/2,y:r.y+r.height/2}})()`);
+async function click(text, selector = '[role="button"], .nsh-run') {
+  const p = await evaluate(`(()=>{const el=[...document.querySelectorAll(${JSON.stringify(selector)})].find(el=>el.getAttribute('aria-label')===${JSON.stringify(text)}||el.textContent.trim()===${JSON.stringify(text)});if(!el)return null;const r=el.getBoundingClientRect();return{x:r.x+r.width/2,y:r.y+r.height/2}})()`);
   if (!p) throw new Error('Button missing: ' + text);
   await send('Input.dispatchMouseEvent', { type: 'mousePressed', ...p, button: 'left', clickCount: 1 });
   await send('Input.dispatchMouseEvent', { type: 'mouseReleased', ...p, button: 'left', clickCount: 1 });
@@ -94,12 +94,14 @@ try {
   await sleep(1500);
   // Optional PR #8 highlight workload: 20,000 ID matches, below the search
   // limits, with a match in every 100 rows throughout the scroll protocol.
-  if (args.search) {
-    await click('id'); await click('Find'); await click('All'); await click('.*');
+  if (args.search || args["search-absent"]) {
+    await click('id', '[data-testid="data-grid"] .nsh-run'); await click('Find'); await click('All'); await click('.*');
     await evaluate(`(()=>{const el=document.querySelector('[data-testid="find-input"]');(el.matches('input,textarea')?el:el.querySelector('input,textarea')).focus()})()`);
-    await send('Input.insertText', { text: '00$' });
-    await until(`document.body.textContent.includes('1 of 20000 matches')`);
-    await until(`!!document.querySelector('[data-testid="search-highlight"]')`);
+    await send('Input.insertText', { text: args.search ? '00$' : 'absent' });
+    if (args.search) {
+      await until(`document.body.textContent.includes('1 of 20000 matches')`);
+      await until(`!!document.querySelector('[data-testid="search-highlight"]')`);
+    } else await until(`document.body.textContent.includes('No matches')`);
     await sleep(1500);
   }
   const setup = function (instrument) {
@@ -108,7 +110,7 @@ try {
     const scroll = [...grid.querySelectorAll('.nsh-scroll')].find(el => el.scrollHeight > 100000);
     const realm = [...document.querySelectorAll('iframe')].map(f => f.contentWindow).find(w => w.__nsh_browser_realm);
     const modules = realm.__nsh_browser_realm.modules;
-    const stats = globalThis.__scrollStats = { calls: [], events: [], frames: [], positions: [], longtasks: [], samples: [], wheels: [], desktop: player.desktopUI, dpr: devicePixelRatio, extent: scroll.scrollHeight, viewport: scroll.clientHeight };
+    const stats = globalThis.__scrollStats = { calls: [], events: [], frames: [], positions: [], longtasks: [], samples: [], wheels: [], mountedNodes: player.views.size, customCells: grid.querySelectorAll('[data-testid="grid-custom-cell"]').length, highlightedCells: grid.querySelectorAll('[data-testid="search-highlight"]').length, desktop: player.desktopUI, dpr: devicePixelRatio, extent: scroll.scrollHeight, viewport: scroll.clientHeight };
     globalThis.__scrollElement = scroll;
     const save = (kind, start, extra = {}) => stats.calls.push({ kind, start, ms: performance.now() - start, ...extra });
     if (instrument) {
@@ -143,7 +145,7 @@ try {
   await evaluate(`__scrollMark('tail-end')`);
   await evaluate(`__scrollMark('profile-start')`);
   // Click the unique ID column to measure concurrent Inspector counting.
-  await click('id');
+  await click('id', '[data-testid="data-grid"] .nsh-run');
   await sleep(50);
   for (const delta of [160,120,80,40,20,10,5,2,1]) { await send('Input.dispatchMouseEvent', { type: 'mouseWheel', ...point, deltaX: 0, deltaY: delta }); await sleep(30); }
   await sleep(2000);
@@ -171,7 +173,7 @@ try {
   if (args.cpu) { const { profile } = await send('Profiler.stop'); await writeFile(output + '.cpuprofile', JSON.stringify(profile)); }
   if (args.trace) { const done = event('Tracing.tracingComplete'); await send('Tracing.end'); const { stream } = await done; let text = ''; for (;;) { const r = await send('IO.read', { handle: stream }); text += r.data; if (r.eof) break; } await send('IO.close', { handle: stream }); await writeFile(output + '.trace.json', text); }
   if (args.screenshot) { const shot = await send('Page.captureScreenshot', { format: 'png' }); await writeFile(args.screenshot, Buffer.from(shot.data, 'base64')); }
-  await writeFile(output, JSON.stringify({ label: args.label, browser: await send('Browser.getVersion'), instrumented: !!args.instrument, search: !!args.search, datasetBytes: (await stat(dataset)).size, summary, stats, metrics }, null, 2));
+  await writeFile(output, JSON.stringify({ label: args.label, browser: await send('Browser.getVersion'), instrumented: !!args.instrument, search: !!args.search, searchAbsent: !!args["search-absent"], datasetBytes: (await stat(dataset)).size, summary, stats, metrics }, null, 2));
   console.log('Wrote', output);
   if (args['max-profile-ms']) checkProfile({ instrumented: !!args.instrument, stats }, Number(args['max-profile-ms']));
 } finally {

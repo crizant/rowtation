@@ -232,3 +232,52 @@ fn partial_profile_is_restarted_after_mutation() {
     s.history(false).unwrap();
     assert_eq!(s.profile(1).unwrap().unique_count, 1);
 }
+
+#[test]
+fn highlight_windows_follow_view_order_and_hide_unfinished_or_cancelled_searches() {
+    let mut s = session("id,a,b\nz,hit,other\na,other,hit hit");
+    let window = || {
+        let mut w = RowWindow::default();
+        w.limit = 2;
+        w.column_offset = Some(1);
+        w.column_limit = Some(2);
+        w
+    };
+    assert_eq!(find(&mut s, "hit", None, false, false), 3);
+    assert_eq!(
+        s.search_highlights(window()).unwrap(),
+        [vec![true, false], vec![false, true]]
+    );
+    s.sort(Some(1), false).unwrap();
+    find(&mut s, "hit", None, false, false);
+    assert_eq!(
+        s.search_highlights(window()).unwrap(),
+        [vec![false, true], vec![true, false]]
+    );
+    s.start_search(SearchOptions {
+        term: "hit".into(),
+        ..Default::default()
+    })
+    .unwrap();
+    assert_eq!(
+        s.search_highlights(window()).unwrap(),
+        [vec![false, false], vec![false, false]]
+    );
+    s.cancel_search();
+    assert_eq!(
+        s.search_highlights(window()).unwrap(),
+        [vec![false, false], vec![false, false]]
+    );
+    let mut invalid = window();
+    invalid.limit = 257;
+    assert_eq!(
+        s.search_highlights(invalid).err().unwrap().code(),
+        "INVALID_WINDOW"
+    );
+    let mut invalid = window();
+    invalid.column_offset = Some(4);
+    assert_eq!(
+        s.search_highlights(invalid).err().unwrap().code(),
+        "INVALID_WINDOW"
+    );
+}

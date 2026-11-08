@@ -1,7 +1,8 @@
 //! NSH transport records contain only requested snapshots; the session owns Rust data.
 use crate::inspection::{ColumnProfile, ProfileJob, ProfileProgress};
 use crate::operations::{
-    EditStatus, MutationResult, Operations, SearchMatch, SearchOptions, SearchResult,
+    EditStatus, MutationResult, Operations, SearchMatch, SearchOptions, SearchProgress,
+    SearchResult,
 };
 use crate::{
     diagnostics::now_ms,
@@ -350,10 +351,56 @@ impl DocumentSession {
     }
     /// Search literal text or bounded Rust regex; retains identities in Rust.
     pub fn search(&mut self, options: SearchOptions) -> Result<SearchResult, EngineError> {
-        if self.operations.order.len() != self.document.row_count() {
-            self.operations.sort(&self.document, None, false)?;
-        }
         self.operations.search(&self.document, options)
+    }
+    /// Start a new cooperative search, discarding previous matches and work.
+    /// Use searchStep between event-loop turns until result is present.
+    pub fn start_search(&mut self, options: SearchOptions) -> Result<(), EngineError> {
+        self.operations.start_search(&self.document, options)
+    }
+    /// Scan for about 8 ms, then return progress without publishing partial hits.
+    /// A regex search within one cell is indivisible and can exceed this budget.
+    pub fn search_step(&mut self) -> Result<SearchProgress, EngineError> {
+        self.operations.search_step(&self.document, 8.0)
+    }
+    /// Release unfinished work and all retained matches immediately.
+    pub fn cancel_search(&mut self) {
+        self.operations.cancel_search();
+    }
+    /// Bounded presentation flags in view order, without copying cell text again.
+    /// Uses the same row/column window rules as rows; unfinished searches expose no hits.
+    pub fn search_highlights(&self, window: RowWindow) -> Result<Vec<Vec<bool>>, EngineError> {
+        self.document
+            .window(window.offset as usize, window.limit as usize)?;
+        let start = window.column_offset.unwrap_or(0) as usize;
+        let count = self.document.column_count();
+        if start > count {
+            return Err(EngineError::new(
+                "INVALID_WINDOW",
+                format!("Column offset must be at most {count}."),
+            ));
+        }
+        let end = window.column_limit.map_or(count, |limit| {
+            start.saturating_add(limit as usize).min(count)
+        });
+        Ok((window.offset as usize
+            ..(window.offset as usize + window.limit as usize).min(self.document.row_count()))
+            .map(|position| {
+                let row = &self.document.rows[self
+                    .operations
+                    .order
+                    .get(position)
+                    .copied()
+                    .unwrap_or(position)];
+                (start..end)
+                    .map(|column| {
+                        self.operations
+                            .matching_cells
+                            .contains(&(row.id(), self.document.columns()[column].id()))
+                    })
+                    .collect()
+            })
+            .collect())
     }
     /// Return one match, without transferring the dataset or match list.
     pub fn search_match(&self, index: u32) -> Option<SearchMatch> {
