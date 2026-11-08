@@ -110,10 +110,12 @@ const output = session.serialize({ delimiter: ",", headers: true });
 | `serialize(options: ExportOptions): Uint8Array` | Optional delimiter/headers default to source settings. Whole document only; no filtered export or download. |
 | `dispose(): void` | NSH frees the Rust value immediately. Calls after disposal throw TypeError. Garbage collection is a fallback; explicitly dispose when closing/replacing a document. |
 
-The inspection viewport keeps only its requested windows, key rows by stable
-identity, and read changing signals inside JSX/closures. The grid requests only
-the rows and columns in view, with 512-byte previews; the inspector copies or shows
-the whole value through `readCell`. Profile common values are 256-byte previews
+The inspection viewport keeps only its requested windows, keys rows by stable
+identity, and reads changing signals inside JSX/closures. The grid caches up to
+256 rows with overscan for the columns in view, with 512-byte previews. Scrolling
+away from cache boundaries avoids bridge calls; refills reuse overlapping snapshots
+and formatted row objects. Document identity, revision and column-window changes
+invalidate reuse. The inspector copies or shows the whole value through `readCell`. Profile common values are 256-byte previews
 with exact counts and whole byte lengths.
 Import UI must keep the old session until a new constructor succeeds, then dispose
 the old one. PR #3 operations should accept stable IDs and revision expectations

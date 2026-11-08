@@ -363,7 +363,22 @@ export function App() {
         description={mode() === "paste" ? "Paste CSV or TSV text below. You can review the format before opening it."
           : mode() === "confirm" ? `This file is ${bytes(pending()?.size ?? 0)}. Rowtation has not read it yet.`
           : analysis()?.ambiguous ? "Confirm the separator below; detection is uncertain." : "Format detected. Review the options before importing."}
-        onClose={dismiss}>
+        onClose={dismiss} footer={
+          <View class="flex-row flex-wrap items-center justify-end gap-2">
+            <If when={mode() === "paste" || (error() && !busy())}><Button label="Choose another file…" quiet compact={compact} onPress={pick} /></If>
+            <View class="flex-1" />
+            <Button label="Cancel" quiet compact={compact} onPress={dismiss} />
+            <If when={mode() === "paste"}>
+              <Button label="Review import" compact={compact} disabled={!paste()} onPress={reviewPaste} />
+            </If>
+            <If when={mode() === "confirm"}>
+              <Button label={busy() ? "Reading…" : "Read file"} compact={compact} disabled={busy() || !pending()} onPress={readLarge} />
+            </If>
+            <If when={mode() === "review"}>
+              <Button label={busy() ? "Importing…" : size()?.large && !accepted() ? "Import anyway" : "Import document"} compact={compact} disabled={busy() || !draft()} onPress={importDocument} />
+            </If>
+          </View>
+        }>
         <If when={mode() === "paste"}>
           <Input label="CSV or TSV text" testID="paste-input" value={paste()} onChange={value => paste.set(value)} multiline placeholder={"name,city\nMia,Brisbane"} />
         </If>
@@ -400,20 +415,6 @@ export function App() {
         </If>
         <If when={error()}><View role="alert" class="gap-2"><Text class="text-sm text-destructive">{error()}</Text>
           <Text class="text-xs text-muted-foreground">Check the separator and quoted fields, or choose another file. Your current document is unchanged.</Text></View></If>
-        <View class="flex-row flex-wrap items-center justify-end gap-2">
-          <If when={mode() === "paste" || (error() && !busy())}><Button label="Choose another file…" quiet compact={compact} onPress={pick} /></If>
-          <View class="flex-1" />
-          <Button label="Cancel" quiet compact={compact} onPress={dismiss} />
-          <If when={mode() === "paste"}>
-            <Button label="Review import" compact={compact} disabled={!paste()} onPress={reviewPaste} />
-          </If>
-          <If when={mode() === "confirm"}>
-            <Button label={busy() ? "Reading…" : "Read file"} compact={compact} disabled={busy() || !pending()} onPress={readLarge} />
-          </If>
-          <If when={mode() === "review"}>
-            <Button label={busy() ? "Importing…" : size()?.large && !accepted() ? "Import anyway" : "Import document"} compact={compact} disabled={busy() || !draft()} onPress={importDocument} />
-          </If>
-        </View>
       </Dialog>}
     </Each>
     <If when={diagnosticsOn()}><DiagnosticsPanel /></If>
