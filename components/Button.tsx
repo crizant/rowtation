@@ -1,4 +1,4 @@
-import { Text } from "nsh";
+import { Text, type JSX } from "nsh";
 import { Button as BaseButton } from "nsh/base";
 import { Icon, type IconName } from "./Icon";
 
@@ -15,11 +15,13 @@ export function Button(props: {
   icon?: IconName;
   testID?: string;
   accessibilityLabel?: string;
+  tooltip?: string;
 }) {
   const size = () => props.icon
     ? (props.compact ? " h-9 w-9" : " h-11 w-11")
     : (props.compact ? " min-h-9 px-4 py-1.5" : " min-h-11 px-5 py-2");
   return <BaseButton onPress={() => props.onPress()} disabled={props.disabled} testID={props.testID} accessibilityLabel={props.accessibilityLabel ?? (props.icon ? props.label : undefined)}
+    tooltip={props.tooltip ? <Text class="rounded-md bg-foreground px-2 py-1 text-xs text-background">{props.tooltip}</Text> as JSX.Element : undefined}
     class={(props.quiet
       ? "cursor-pointer disabled:cursor-not-allowed shrink-0 flex-row items-center justify-center rounded-full border border-border bg-background shadow-sm hover:bg-muted active:bg-muted focus:ring-2 focus:ring-ring disabled:opacity-50"
       : "cursor-pointer disabled:cursor-not-allowed shrink-0 flex-row items-center justify-center rounded-full bg-primary shadow-sm hover:bg-primary/90 active:bg-primary/80 focus:ring-2 focus:ring-ring disabled:opacity-50") + size()}>

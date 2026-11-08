@@ -199,12 +199,14 @@ test("search navigation and scoped replacement remain correct after sort", async
   const app = await open("./App.tsx", { width: 1280, height: 800, clipboard: "id,city\nb,Brisbane Brisbane\na,Sydney\nc,Brisbane" });
   await app.press("Paste from clipboard"); await app.press("Review import"); await app.press("Import document");
   await app.waitFor("3 rows · 2 columns");
-  await app.press("Sydney"); await app.press("Find & replace");
+  await app.press("Sydney"); await app.press("Find");
+  expect(app.shows("id:replace-input")).toBe(false);
   await app.paste("find-input", { text: "Brisbane" }); await app.waitFor("1 of 3 matches");
   expect(app.count("id:search-highlight") > 0).toBe(true);
   await app.press("Next"); await app.waitFor("2 of 3 matches");
   await app.press("Next"); await app.waitFor("Row 3 · Column 2");
   await app.press("Previous"); await app.waitFor("2 of 3 matches");
+  await app.press("Replace…");
   await app.paste("replace-input", { text: "City" }); await app.press("Replace");
   await app.waitFor("1 replacement in 1 cell");
   await app.press("Replace all"); await app.waitFor("2 replacements in 2 cells");
@@ -212,20 +214,21 @@ test("search navigation and scoped replacement remain correct after sort", async
   await app.press("Undo"); await app.waitFor("1 of 3 matches");
   await app.press("Close find");
   await app.waitUntil(() => app.count("id:search-highlight") === 0);
-  await app.press("a"); await app.press("Sort ↓");
-  await app.press("c"); await app.press("Edit cell…");
+  await app.press("a"); await app.press("id:sort:1"); await app.press("id:sort:1");
+  await app.press("c"); await app.keyboard.press("f2");
   await app.clear("cell-draft"); await app.paste("cell-draft", { text: "z" }); await app.press("Save cell");
   await app.waitFor("1 modified · Unsaved");
-  await app.press("Reset order"); await app.press("z"); await app.waitFor("Row 3 · Column 1");
+  await app.press("id:sort:1"); await app.press("z"); await app.waitFor("Row 3 · Column 1");
   await app.press("Undo"); await app.waitFor("Unmodified");
 });
 
 test("mobile touch editing supports commit cancel and undo", async () => {
   const app = await open("./App.tsx", { width: 390, height: 844, clipboard: "name,city\nMia,Brisbane" });
   await app.press("Paste from clipboard"); await app.press("Review import"); await app.press("Import document");
-  await app.waitFor("1 row · 2 columns"); await app.press("Mia"); await app.press("Edit cell…");
+  await app.waitFor("1 row · 2 columns"); await app.press("Mia");
+  await app.wait(600); await app.press("Mia"); await app.press("Mia");
   await app.clear("cell-draft"); await app.paste("cell-draft", { text: "Ann" }); await app.press("Save cell");
-  await app.waitFor("Ann"); await app.press("Edit cell…");
+  await app.waitFor("Ann"); await app.wait(600); await app.press("Ann"); await app.press("Ann");
   await app.paste("cell-draft", { text: "discard" }); await app.press("Cancel");
   await app.press("Undo"); await app.waitFor("Mia"); await app.waitFor("Unmodified");
   await app.press("Redo"); await app.waitFor("Ann");
@@ -241,4 +244,101 @@ test("cell editor keyboard commits, tabs, and cancels without mutating drafts", 
   await app.waitFor("2 modified · Unsaved"); await app.keyboard.press("f2");
   await app.paste("cell-draft", {text: "discard"}); await app.keyboard.press("escape");
   await app.waitFor("second"); await app.keyboard.press("mod+z"); await app.waitFor("1 modified · Unsaved");
+  await app.keyboard.press("mod+shift+z"); await app.waitFor("2 modified · Unsaved");
+  await app.keyboard.press("mod+f");
+  expect(app.shows("id:find-input")).toBe(true);
+  expect(app.shows("id:replace-input")).toBe(false);
+});
+
+test("closing or replacing a modified document asks before discarding it", async () => {
+  const app = await open("./App.tsx", { width: 1280, height: 800, clipboard: "id,city\n1,Sydney" });
+  await app.press("Paste from clipboard"); await app.press("Review import"); await app.press("Import document");
+  await app.waitFor("1 row · 2 columns");
+  await app.press("Sydney"); await app.keyboard.press("f2");
+  await app.clear("cell-draft"); await app.paste("cell-draft", { text: "Melbourne" }); await app.press("Save cell");
+  await app.waitFor("1 modified · Unsaved");
+  let answer = "Keep editing";
+  app.onDialog(dialog => {
+    expect(dialog.title).toBe("Discard unsaved changes?");
+    expect(dialog.message ?? "").toContain("cannot export");
+    return answer;
+  });
+  await app.press("close-document");
+  expect(app.texts()).toContain("Melbourne");
+  await app.press("More"); await app.press("Import…");
+  expect(app.texts()).toContain("Melbourne");
+  expect(app.shows("id:paste-input")).toBe(false);
+  answer = "Discard changes";
+  await app.press("close-document");
+  expect(app.texts()).toContain("Rowtation");
+  expect(app.texts()).not.toContain("Melbourne");
+});
+
+test("copied search matches stay plain cell text", async () => {
+  const app = await open("./App.tsx", { width: 1280, height: 800, clipboard: "id,city\nb,Brisbane Brisbane\na,Sydney" });
+  await app.press("Paste from clipboard"); await app.press("Review import"); await app.press("Import document");
+  await app.waitFor("2 rows · 2 columns");
+  await app.press("Find"); await app.paste("find-input", { text: "Brisbane" });
+  await app.submit("find-input");
+  await app.waitFor("1 of 2 matches");
+  expect(app.count("id:search-highlight") > 0).toBe(true);
+  await app.press("Brisbane Brisbane");
+  await app.keyboard.press("mod+c");
+  expect(app.clipboard()).toBe("Brisbane Brisbane");
+  await app.press("copy-value");
+  await app.waitFor("Copied");
+  expect(app.clipboard()).toBe("Brisbane Brisbane");
+});
+
+test("double-press edits the cell under the pointer", async () => {
+  const app = await open("./App.tsx", { width: 1280, height: 800, clipboard: "id,city\na,Sydney\nb,Brisbane" });
+  await app.press("Paste from clipboard"); await app.press("Review import"); await app.press("Import document");
+  await app.waitFor("2 rows · 2 columns");
+  await app.press("Sydney");
+  await app.wait(600);
+  await app.press("a"); await app.press("a");
+  await app.waitFor("Edit id");
+  expect(app.value("cell-draft")).toBe("a");
+});
+
+test("a cell menu can edit the pressed cell", async () => {
+  const app = await open("./App.tsx", { width: 1280, height: 800, platform: "macos", clipboard: "id,city\na,Sydney" });
+  await app.press("Paste from clipboard"); await app.press("Review import"); await app.press("Import document");
+  await app.waitFor("1 row · 2 columns");
+  await app.rightClick("Sydney");
+  await app.press("Edit cell");
+  await app.waitFor("Edit city");
+  expect(app.value("cell-draft")).toBe("Sydney");
+});
+
+test("mobile find keeps the query separate from replacement", async () => {
+  const app = await open("./App.tsx", { width: 390, height: 844, clipboard: "name,city\nMia,Brisbane" });
+  await app.press("Paste from clipboard"); await app.press("Review import"); await app.press("Import document");
+  await app.waitFor("1 row · 2 columns");
+  expect(app.texts()).toContain("Pasted data");
+  expect(app.texts()).not.toContain("Sort ↑");
+  expect(app.texts()).not.toContain("Find & replace");
+  expect(app.texts()).not.toContain("Edit cell…");
+  await app.press("Find");
+  expect(app.shows("id:find-input")).toBe(true);
+  expect(app.shows("id:replace-input")).toBe(false);
+  await app.press("Replace…");
+  expect(app.shows("id:replace-input")).toBe(true);
+  await app.press("Hide replace");
+  expect(app.shows("id:replace-input")).toBe(false);
+  await app.press("Close find");
+  await app.wait(600);
+  await app.press("Mia"); await app.press("Mia");
+  await app.clear("cell-draft"); await app.paste("cell-draft", { text: "Ann" }); await app.press("Save cell");
+  await app.waitFor("1 modified · Unsaved");
+  let answer = "Keep editing";
+  app.onDialog(dialog => {
+    expect(dialog.message ?? "").toContain("cannot export");
+    return answer;
+  });
+  await app.press("Import…");
+  expect(app.shows("id:paste-input")).toBe(false);
+  answer = "Discard changes";
+  await app.press("Import…");
+  expect(app.shows("id:paste-input")).toBe(true);
 });

@@ -20,8 +20,10 @@ a right inspector; narrow browsers use a contextual panel. Other formats and
 export/download UI remain planned. See [operation semantics](docs/operations.md).
 
 Data stays local. There is no backend, upload, telemetry, persistent storage or
-session history. Closing a document releases its Rust session. Import failures
-preserve the active document; a successful replacement releases the old session.
+session history. Closing an unmodified document releases its Rust session.
+Closing or replacing a modified document asks first, because there is no export
+or download yet; confirming discards those changes. Import failures preserve
+the active document; a successful replacement releases the old session.
 
 See [UI validation instructions](docs/ui-validation.md) for local desktop/mobile
 screenshot generation, visual inspection guidance, and browser validation commands.
@@ -68,7 +70,9 @@ times; row-window time with Rust's measured share and an estimated transfer shar
 from the same call; time from an update to the next animation frame (which excludes
 paint); and WebAssembly memory. They appear in the panel and console only. Nothing is recorded while it is off or sent anywhere.
 `cargo test --release --test stress -- --ignored --nocapture` runs the large-input
-stress tests and a native benchmark (`ROWTATION_BENCH_MB`, default 64).
+stress tests and a native benchmark (`ROWTATION_BENCH_MB`, default 64, or
+`ROWTATION_BENCH_ROWS` for an exact row count). Sort and search in that
+benchmark run synchronously on the calling thread. They are not an import-size cap.
 
 See [architecture and API contracts](docs/architecture.md) for Rust/TSX usage,
 identity, error and disposal rules.

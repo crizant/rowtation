@@ -55,12 +55,10 @@ are shared with the development server and package builder.
 Verified on 2026-11-08 with NSH 0.4.0 and Chrome for Testing:
 
 - `cargo fmt --check`, `nsh check`, and `nsh build`: passed.
-- `nsh test`: 63 passed, with 2 ignored stress tests (41 Rust tests and 22 UI/cache workflows).
-- `nsh test --target web --browser <Chromium>`: 22 passed, including removal of search highlights after closing Find.
-- `scripts/test-browser-files.sh`: local picker/drop workflow passed.
-- Native and wasm32 `cargo clippy` with warnings denied: passed.
-- `tests/operations-layouts.steps.js`: passed. Match highlights are visible while Find is open. Closing Find leaves the grid without them, on both the 1440-point and 390-point layouts, and the mobile status line shows the full unsaved state.
-- `nsh package --target web -o dist`: passed.
+- `nsh test`: 68 passed, with 2 ignored stress tests (41 Rust tests and 27 UI/cache workflows). The added workflows cover dirty close/replace confirmation, clipboard text while a cell is highlighted, double-press target selection, the cell menu, keyboard find/undo/redo, and the compact mobile find bar.
+- `nsh test --target web --browser <Chromium>`: 27 passed, including removal of search highlights after closing Find and the compact mobile find bar.
+- Native `cargo clippy --all-targets` with warnings denied: passed. The operations library was not changed in this pass.
+- A phone-width check of the running web app shows the filename and format on two lines, the find field beside previous/next, and Replace… and Options on the next row. Match tint is visible. `tests/operations-layouts.steps.js`, `scripts/test-browser-files.sh`, and `nsh package` were not re-run for this chrome change.
 - The test browser does not report a desktop pointer, so the 34-point desktop grid density and compact controls are not shown in these captures. Import-layout captures were not regenerated for this operations pass.
 
 ## Limits
@@ -88,8 +86,8 @@ the only deliverable.
 
 ## Editor captures
 
-`tests/operations-layouts.steps.js` imports synthetic orders, sorts and replaces in
-a selected column, verifies a visible highlight, checks that closing Find clears
-it, and captures desktop, mobile, closed-find and
-touch-editor states. Run `nsh test App.tsx --target web --browser /path/to/chrome < tests/operations-layouts.steps.js`. The captures are
-`docs/screenshots/operations-{desktop,mobile,find-closed,find-closed-desktop,mobile-editor}.png`.
+`tests/operations-layouts.steps.js` imports synthetic orders, sorts from the
+column header, replaces in a selected column, verifies a visible highlight,
+checks that closing Find clears it, and captures desktop, mobile, closed-find,
+the compact mobile find bar, and the touch editor. Run `nsh test App.tsx --target web --browser /path/to/chrome < tests/operations-layouts.steps.js`. The captures are
+`docs/screenshots/operations-{desktop,mobile,find-closed,find-closed-desktop,mobile-find,mobile-editor}.png`.

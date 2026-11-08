@@ -1,8 +1,8 @@
 import { effect, platform, signal, Text, View, windowSize } from "nsh";
-import { DataTable, type DataTableCell, type DataTableRange, type DataTableRef, type DataTableSort, type DataTableSelection } from "nsh/base";
+import { DataTable, type DataTableRange, type DataTableRef, type DataTableSort, type DataTableSelection } from "nsh/base";
 import type { CellSnapshot, ColumnMetadata, DocumentMetadata, DocumentSession, RowWindow } from "rowtation/native";
 import { measuring, record, timeToNextFrame } from "./diagnostics";
-import { gridCellDisplay, loadGridRows, PREVIEW_BYTES } from "./gridRowCache";
+import { loadGridRows, PREVIEW_BYTES } from "./gridRowCache";
 export { cellText, PREVIEW_BYTES } from "./gridRowCache";
 
 export interface CellSelection {
@@ -22,7 +22,8 @@ export function DataGrid(props: {
   selected: CellSelection | null;
   sort: DataTableSort | null;
   onSort: (sort: DataTableSort | null) => void;
-  onEdit: () => void;
+  onEdit: (rowIndex: number, columnIndex: number) => void;
+  onCellMenu: (rowIndex: number, columnIndex: number, x: number, y: number) => void;
   onReady: (focus: () => void) => void;
   onSelect: (selection: CellSelection | null, column: number | null) => void;
 }) {
@@ -79,16 +80,25 @@ export function DataGrid(props: {
   // Pointer desktops get a denser grid; touch layouts keep 44-point rows.
   const dense = () => platform.desktop && windowSize().width >= 900;
   const columnWidth = () => windowSize().width < 640 ? 148 : 176;
-  return <DataTable renderCell={cell => {
-      const shown = gridCellDisplay(cell.text);
-      // The renderer slot needs explicit content dimensions for its background and hit bounds.
-      return <View testID={shown.matched ? "search-highlight" : undefined} style={{ height: dense() ? 30 : 40, width: columnWidth() - 24 }}
-        class={"justify-center rounded" + (shown.matched ? " bg-primary/15" : "")}>
-        <Text class="text-[13px] text-foreground line-clamp-1">{shown.text}</Text>
-      </View>;
-    }}
+  // The table recalls a cell only when its text changes. Match tint is a binding
+  // over the row cache, so copied values stay the plain field text.
+  function GridCell(cell: { text: string; row: number; column: number }) {
+    const matched = () => {
+      const current = cache();
+      return !!current.snapshot.rows[cell.row - current.snapshot.offset]?.cells[cell.column - current.snapshot.columnOffset]?.matched;
+    };
+    return <View testID={matched() ? "search-highlight" : undefined}
+      onLongPress={() => props.onCellMenu(cell.row, cell.column, 16, 120)}
+      style={{ height: dense() ? 30 : 40, width: columnWidth() - 24 }}
+      class={"justify-center rounded" + (matched() ? " bg-primary/15" : "")}>
+      <Text class="text-[13px] text-foreground line-clamp-1">{cell.text}</Text>
+    </View>;
+  }
+  return <DataTable renderCell={cell => <GridCell text={cell.text} row={cell.row} column={cell.column} />}
     class="flex-1 min-h-0 min-w-0 bg-background" testID="data-grid" accessibilityLabel="Document data"
-    ref={ref => { table = ref; table.select(selection()); }} sort={props.sort} onSortChange={e => props.onSort(e.sort)} onDoublePress={() => props.onEdit()}
+    ref={ref => { table = ref; table.select(selection()); }} sort={props.sort} onSortChange={e => props.onSort(e.sort)}
+    onDoublePress={e => { if (e.target.row != null && e.target.column != null) props.onEdit(e.target.row, e.target.column); }}
+    onContextMenu={e => { if (e.row != null && e.column != null) props.onCellMenu(e.row, e.column, e.x, e.y); }}
     columns={props.columns.map((column) => ({ key: String(column.id), sortable: true, title: column.name || "(unnamed)", width: columnWidth() }))}
     data={cache().data} dataStart={rows().offset} rowCount={props.metadata.rowCount}
     rowHeight={dense() ? 34 : 44} headerHeight={dense() ? 36 : 44} fontSize={13} rowHeader cellSelectable columnSelectable rowSelectable={false}
@@ -97,11 +107,13 @@ export function DataGrid(props: {
     onVisibleColumnsChange={e => { visibleColumns = e.range; load(); }} onSelectionChange={e => select(e.selection)}
     renderHeaderCell={cell => <View class="flex-1 flex-row items-center gap-2 px-3">
       <View class="h-4 min-w-5 items-center justify-center rounded bg-muted px-1"><Text class="text-[10px] font-medium text-muted-foreground">Aa</Text></View>
-      <Text class="line-clamp-1 flex-1 text-xs font-medium text-muted-foreground">{cell.title}{cell.sort === "ascending" ? " ↑" : cell.sort === "descending" ? " ↓" : ""}</Text>
+      <Text class="line-clamp-1 flex-1 text-xs font-medium text-muted-foreground">{cell.title}</Text>
     </View>}
     classes={{ root: "border-0", header: "bg-background border-b border-border/70", headerCell: "border-0",
       row: "border-b border-border/50", rowHover: "bg-muted/40", cell: "px-3 text-foreground",
       cellSelected: "bg-background border-2 border-foreground rounded-[3px]", cellColumnSelected: "bg-muted/50",
+      sortIndicator: "text-muted-foreground", sortAscending: "text-muted-foreground selected:text-foreground",
+      sortDescending: "text-muted-foreground selected:text-foreground",
       rowHeader: "text-muted-foreground bg-background text-xs", rowHeaderCorner: "bg-background" }}
     empty={<View class="flex-1 items-center justify-center gap-2 p-6"><Text class="text-foreground">No data rows</Text>
       <Text class="text-sm text-muted-foreground">This document is empty or contains only headers.</Text></View>} />;

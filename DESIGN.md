@@ -28,8 +28,10 @@ reduce opacity and suppress interaction. No motion is needed for this starter.
 
 Make import → inspect the primary workflow. Keep the virtualized table at the
 center, with a compact toolbar for opening another document. Keep headers and
-selected-cell identity stable under scrolling. Sort, find/replace and edit controls stay beside the document. Export
-belongs to a later milestone.
+selected-cell identity stable under scrolling. Sort from the column header.
+Find, undo, and redo stay in the document toolbar. Export belongs to a later
+milestone, so closing or replacing a modified document asks before the changes
+are dropped.
 
 Provide file selection and paste as alternatives to drag and drop. Keep the
 format, name and row/column counts visible. Show parsing errors near their source;
@@ -44,9 +46,11 @@ chips. Narrow and touch browsers use a left-aligned title, a pressable import ca
 and a grouped action list. Show only CSV/TSV as supported; there is no recent
 history. The privacy note is concise and mentions large-file confirmation.
 
-The document toolbar contains a labeled back action, filename, a "CSV · UTF-8"
-badge and, on wide screens, Import…. Below 900 points, Column info and Import…
-sit in an action bar below the grid, never floating over rows.
+The document toolbar contains a labeled back action, the filename, and a
+"CSV · UTF-8" badge, then Find, Undo, Redo, and a More menu. Below 900 points
+the format sits on a second line under the filename so the name keeps the
+width. Import… lives in the menu. Column info and Import… also sit in an
+action bar below the grid, never floating over rows.
 The table owns its scrolling region. Keep the status bar outside it and prevent
 horizontal page overflow. On desktop, an independent scrolling inspector sits in
 a stationary rounded frame. Below 900 points it opens contextually; never squeeze
@@ -70,7 +74,11 @@ misrepresent the engine. An inspector distinguishes empty text from missing fiel
 Clickable buttons and checkboxes use a pointer cursor; disabled controls use a
 not-allowed cursor and suppress interaction.
 
-Editing uses an accessible dialog with a touch-sized Save cell action. Find and
-replace is an expandable toolbar with explicit scope and wrapping compact controls.
-Matching cells use primary-token tint; active selection retains its dark border.
-Sort direction appears in the header and reset is visible while sorted.
+Editing uses an accessible dialog with a touch-sized Save cell action. Open it
+with a double-press, F2, or Edit cell in the cell menu. Clear cell is in that
+menu. Find opens a compact bar: the query and match navigation come first, and
+replacement and options stay closed until asked. Below 900 points the query
+keeps its own row so Replace… and Options do not shrink it. Matching cells use
+primary-token tint; active selection retains its dark border. Sort direction is
+the table header's own indicator; press it again to reverse, and once more to
+restore imported order.

@@ -58,8 +58,8 @@ values already are Text. No formulas, markup or code are evaluated.
 ## Editing, consistency and history
 
 Selection and mutation use document-scoped stable row/column IDs. Display row
-positions are only for scrolling. The grid supports double-click or F2 to
-open an editor; the labeled Edit cell action supports touch. Enter or Save cell
+positions are only for scrolling. Double-press, F2, or Edit cell in the cell
+menu opens an editor. Clear cell is in that menu. Enter or Save cell
 commits; Escape/Cancel drops the TSX draft. Tab commits and selects the next cell.
 Clear cell commits empty Text, which differs from Missing or Null. Drafts never
 modify the Rust document before commit. Re-entering identical text is a no-op.
@@ -83,7 +83,22 @@ undo/redo, removes that difference; undo history eviction does not reset the dir
 baseline. Source bytes/quote style are not duplicated. Undo restores Missing tails
 and serialization round trips as well as values. There is no save/export workflow;
 “Unsaved” means the active in-memory document differs from import. Closing or
-replacing it releases its session and changes.
+replacing a modified document asks first and says that Rowtation cannot export
+or download it yet. Confirming discards the changes and releases the session.
+An unmodified document closes immediately.
+
+Search and sort run synchronously on the calling thread, including in the browser,
+so a large query blocks the tab until it returns. The limits above are search
+limits only. Import has no size cap.
+
+`ROWTATION_BENCH_ROWS=2000000 cargo test --release --test stress -- --ignored benchmark_engine --nocapture`
+measures a generated CSV. One release run on 8 Nov 2026 loaded 2,000,000 rows
+(113 MiB, 6 columns). Sorting the country column took 549 ms ascending and
+533 ms descending; restoring imported order took 0.23 ms. A scoped search for
+one order id took 29 ms and found that row. Searching the status column for
+“paid” returned the 100,000-match error in 5 ms. Searching every column for an
+absent token returned the 64 MiB error in 65 ms. Neither error changes the
+document. These are single-run timings, not a performance budget.
 
 Inspector statistics remain lazy, exact and bounded to five common-value previews.
 They are invalidated after value changes and recalculated in slices when visible.

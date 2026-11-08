@@ -11,21 +11,6 @@ export function cellText(cell: CellSnapshot): string {
   return cell.truncated ? `${text}…` : text;
 }
 
-// DataTable asks the app to redraw a custom cell only when this string changes.
-// Search does not change the value, so the match flag is a zero-width prefix.
-const MATCHED = "\u200c";
-const UNMATCHED = "\u200b";
-
-export function gridCellValue(cell: CellSnapshot): string {
-  return (cell.matched ? MATCHED : UNMATCHED) + cellText(cell);
-}
-
-export function gridCellDisplay(value: string): { text: string; matched: boolean } {
-  if (value.startsWith(MATCHED)) return { text: value.slice(1), matched: true };
-  if (value.startsWith(UNMATCHED)) return { text: value.slice(1), matched: false };
-  return { text: value, matched: false };
-}
-
 interface GridRowCache {
   snapshot: RowsSnapshot;
   columnEnd: number;
@@ -75,7 +60,7 @@ export function loadGridRows(
       const fetched = fetch({ offset, limit, columnOffset: columnStart, columnLimit: columnEnd - columnStart, previewBytes: PREVIEW_BYTES });
       for (const row of fetched.rows) {
         const cells: Record<string, string> = {};
-        row.cells.forEach((cell, i) => { cells[keys[i]] = gridCellValue(cell); });
+        row.cells.forEach((cell, i) => { cells[keys[i]] = cellText(cell); });
         snapshots.push(row);
         data.push(cells);
       }
