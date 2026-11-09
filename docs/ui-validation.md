@@ -1,102 +1,74 @@
-# Import and inspection validation
+# Validation
 
-## Generate and inspect screenshots locally
+## Checks and web release
 
-Run from the repository root with NSH 0.4.0 and Chromium installed:
+Use NSH 0.4.0 and the toolchain in [README](../README.md). Run NSH commands
+serially: tests, the development server and packaging share generated runtime
+paths. Set `ROWTATION_BROWSER` to a Chromium executable when discovery fails.
 
 ```sh
-scripts/capture-layouts.sh
-# When Chromium is outside NSH's default search paths:
-ROWTATION_BROWSER=/path/to/chromium scripts/capture-layouts.sh
+cargo fmt --check
+nsh check
+nsh build
+nsh test
+node --test scripts/web-metadata.test.mjs
+ROWTATION_BROWSER=/path/to/chrome scripts/test-browser.sh
+ROWTATION_BROWSER=/path/to/chrome scripts/test-browser-files.sh
+nsh package --target web -o dist
+node scripts/web-metadata.mjs dist/Rowtation/index.html
+node scripts/web-metadata.mjs --check dist/Rowtation/index.html
+node scripts/test-export-package.mjs --build dist/Rowtation --browser /path/to/chrome
 ```
 
-The script uses `tests/capture-layouts.steps.js` to capture the production entry
-with synthetic orders from `tests/data/orders.csv`. Generated PNGs are written
-to `docs/screenshots/`, which is ignored by Git. Captures are local verification
-artifacts; do not commit them or use repository image links in PR descriptions.
+The package smoke needs Node 24+, uses no npm dependencies, and serves the static
+build over loopback. It checks homepage scroll bounds at fitting and short
+viewports, edits a cell, copies output, downloads all five formats, verifies
+contents/MIME/extensions and object-URL cleanup, then checks undo and mobile
+touch export. A download request alone is not proof that a file was saved.
+CI runs this smoke after packaging; it does not publish the site.
 
-Open the generated PNGs in an image viewer. Inspect desktop and mobile import,
-the data grid, the contextual inspector, the scrolled desktop sidebar, and dark
-appearance. Check centered desktop dialogs, mobile safe-area spacing, readable
-selection, one horizontal grid scrollbar, and content clipping inside the
-stationary inspector frame. Re-run after visible changes; automated workflow
-tests alone do not establish visual correctness. Delete the local output when
-it is no longer needed.
+## Test ownership
 
-## Focused workflow checks
+- Rust tests own parsing, normalization, types, invalid input, search/replace,
+  ordering, stable identity, history, export policies and meaningful round trips.
+- UI tests own import/edit/search/export workflows, focus, cancellation, session
+  disposal and grid recycling. Search lifecycle tests count real bridge calls;
+  responsiveness tests require an event-loop yield rather than a timing threshold.
+- `scripts/test-browser.sh` runs shared tests with browser input and Rust/WASM.
+  It excludes `*.headless.test.ts[x]`: NSH 0.4's web host rejects the iOS idiom
+  used by the separate long-press test. This does not add a native delivery target.
+- `scripts/test-browser-files.sh` covers File/FileList/DragEvent workflows with
+  synthetic data, including delayed reads and failed-import preservation. It
+  temporarily changes `nsh.json` and restores it with an exit trap; production
+  never imports its test host.
+- Stress and performance fixtures are opt-in. See [scroll](scroll-performance.md),
+  [search](search-performance.md) and [structured import](structured-performance.md)
+  measurements for commands, conditions and limitations.
 
-`nsh test` runs the Rust fixtures and production UI workflows. These cover UTF-8
-CSV/TSV parsing, explicit headers, failed import preservation, successful
-replacement, disposal, exact profile counts, previews with whole-value view and copy, diagnostics, cached summaries,
-virtualized scrolling, keyboard selection and responsive layouts. The wide-table
-case uses 512 columns and a 2160-point viewport, then narrows the viewport and
-navigates to an offscreen column. Two workflows cover the large-import warning:
-100,001 records require "Import anyway", and small input shows no warning. One mobile workflow covers TSV/no-header import and the contextual inspector. There
-are eight UI/bridge workflows in total; parser and statistics cases stay in Rust.
-Appearance is verified through screenshots rather than a separate DOM geometry
-test harness.
+## Visual checks
 
-`ROWTATION_BROWSER=/path/to/chrome scripts/test-browser.sh` runs the shared test
-files through actual browser input and Rust/WASM. It discovers tracked and
-untracked test files, excluding the explicit `*.headless.test.ts[x]` suffix.
-`nsh test` still discovers all tests, including the headless-only iOS long-press
-case in `components/DataGrid.headless.test.tsx`. NSH 0.4 rejects `platform: "ios"`
-on its web host, and its physical hit layer does not deliver that custom-cell
-long-press; see [the scrolling investigation](scroll-performance.md#custom-cell-renderer-regression-pr-8).
-Use `nsh test <test-file> --target web --browser <Chromium>` for one shared file.
+Generate only the captures relevant to the change:
 
-`scripts/test-browser-files.sh` adds browser File/FileList/DragEvent coverage:
-file picker selection, a valid TSV drop, malformed CSV, unsupported extension,
-multiple-file rejection, invalid UTF-8 after a valid draft, cancellation and
-newer workflows during delayed reads, preservation/replacement, and session
-closing/reopening. It uses synthetic File objects to supply a picker selection
-instead of driving the operating system's chooser. The fixture host supplies file
-selections/drops only; it contains no layout observer or product test controls.
-The script restores nsh.json after its temporary test-host configuration,
-including on failure. Run NSH commands serially; 0.4's generated runtime paths
-are shared with the development server and package builder.
+| Area | Command or steps file |
+| --- | --- |
+| Home, import, inspector and grid | `scripts/capture-layouts.sh` |
+| Search, replacement and editing | `tests/operations-layouts.steps.js` |
+| Search scope and shared dialog actions | `tests/mobile-controls.steps.js` |
+| Export formats, warnings and dark appearance | `tests/export-layouts.steps.js` |
 
-## Verification result
+Run a steps file with `nsh test App.tsx --target web --browser /path/to/chrome < tests/FILE.steps.js`.
+Captures use synthetic data and go to ignored `docs/screenshots/`. Inspect them;
+passing behavior tests do not establish visual correctness. CI retains export
+captures as its `export-dialog-screenshots` artifact.
 
-Verified on 2026-11-08 with NSH 0.4.0 and Chrome for Testing:
+Check 320- and 390-point phones, an intermediate width, a wide desktop, short
+viewports, enlarged text and light/dark appearance. Content that fits must not
+scroll through empty space; content that overflows must keep its final action
+reachable. Also check dialog action lanes and safe areas, long column names,
+search expansion, grid selection and a single horizontal grid scrollbar.
+Recheck the scoped NSH browser compatibility styles after an NSH upgrade.
 
-- `cargo fmt --check`, `nsh check`, and `nsh build`: passed.
-- `nsh test`: 68 passed, with 2 ignored stress tests (41 Rust tests and 27 UI/cache workflows). The added workflows cover dirty close/replace confirmation, clipboard text while a cell is highlighted, double-press target selection, the cell menu, keyboard find/undo/redo, and the compact mobile find bar.
-- `nsh test --target web --browser <Chromium>`: 27 passed, including removal of search highlights after closing Find and the compact mobile find bar.
-- Native `cargo clippy --all-targets` with warnings denied: passed. The operations library was not changed in this pass.
-- A phone-width check of the running web app shows the filename and format on two lines and the find field beside previous and next. Case, regex, column scope, and Replace… sit on the following row. Match tint is visible. At that time, `scripts/test-browser-files.sh` opened Import… from More on the wide document. The document chrome no longer has that menu or the mobile Import… action; Back returns home, and the file script drops a replacement while a document is open. `tests/operations-layouts.steps.js` and `nsh package` were not re-run for this chrome change.
-- The later search refinement was checked with `nsh check` and `nsh test App.test.tsx` (24 passed), plus the search-index unit test. Those runs cover empty, pending, no-result, and regex-error status; the same hit across replace, undo, redo, and option changes; keyboard navigation; a match past the 512-byte preview; and Next/Previous staying disabled while a search is pending. A 390-point check of the running app shows the query beside previous and next, with the count, Aa, regex, All, and Replace… on the next row and nothing past the screen edge. Layout captures were not regenerated.
-- The test browser does not report a desktop pointer, so the 34-point desktop grid density and compact controls are not shown in these captures. Import-layout captures were not regenerated for this operations pass.
-- Later the same day, the More menu and the mobile Import… action were removed. Back returns home before another import and still asks before discarding edits. `nsh test` passed 114 tests and skipped 7 existing benchmark/stress tests. Browser runs of `App.test.tsx` (24) and `StructuredImport.test.tsx` (7) passed, as did `scripts/test-browser-files.sh`, `nsh check` and `nsh build`. Desktop, 390-point and 320-point checks show Back, Find, Undo and Redo, with Export… in the desktop toolbar and beside Column info on narrow screens. Dropping a file onto an open document can still start a replacement import.
-
-## Limits
-
-CSV/TSV values remain literal Text. There is no numeric/date inference, automatic
-header inference, document history or persistence. Export supports five formats
-with explicit policies; see [export](export.md). Sorting,
-search, cell editing, literal replacement and bounded undo/redo stay in the
-active in-memory document. The existing internal serializer remains available to
-Rust callers.
-
-Parsing and first-time column profiling are synchronous on the browser thread.
-There are no size caps. Above 8 MiB, 100,000 records, 512 columns, 1,000,000
-fields or a 1 MiB field, the review step asks for confirmation; files above 8 MiB
-are confirmed before the browser reads them. These thresholds
-are advisory, not large-file responsiveness benchmarks; very large input can make
-the tab unresponsive or exhaust its memory. The grid shows 512-byte previews; the
-inspector's full-value dialog renders 32,768 characters at a time and copy always
-takes the whole value. They are not full-text editors. File selection/drop requires a modern browser. Clipboard
-permission failures leave a manual paste field available.
-
-The scoped duplicate-scrollbar CSS depends on NSH 0.4's browser DOM classes,
-including the desktop bar's stacking. Visually check that horizontal scrolling
-still works and that the bar stays under Diagnostics when upgrading NSH. Web is
-the only deliverable.
-
-## Editor captures
-
-`tests/operations-layouts.steps.js` imports synthetic orders, sorts from the
-column header, replaces in a selected column, verifies a visible highlight,
-checks that closing Find clears it, and captures desktop, mobile, closed-find,
-the compact mobile find bar, and the touch editor. Run `nsh test App.tsx --target web --browser /path/to/chrome < tests/operations-layouts.steps.js`. The captures are
-`docs/screenshots/operations-{desktop,mobile,find-closed,find-closed-desktop,mobile-find,mobile-editor}.png`.
+Chromium is the automated browser target. Safari/Firefox, actual phone keyboards,
+and deployed-origin clipboard/download permissions need separate validation.
+Current data-format and memory limits belong in [product](product.md),
+[operations](operations.md) and [export](export.md), rather than validation logs.
