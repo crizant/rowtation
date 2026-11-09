@@ -29,7 +29,8 @@ reduce opacity and suppress interaction. No motion is needed for this starter.
 Make import → inspect the primary workflow. Keep the virtualized table at the
 center. Back in the document toolbar returns home so another file can be imported.
 Keep headers and selected-cell identity stable under scrolling. Sort from the column header.
-Find, undo, and redo stay in the document toolbar. Export… opens a compact five-format dialog. Closing or replacing a modified
+Find, undo, and redo stay in the document toolbar. Export… opens a compact five-format
+dialog. Closing or replacing a modified
 document still asks before the changes are dropped, even after export.
 
 Provide file selection and paste as alternatives to drag and drop. Keep the
@@ -46,7 +47,8 @@ then, with a little more space, the 13-point muted line “CSV, TSV, JSON, NDJSO
 card with visible Paste (⌘V/Ctrl+V also works) and Choose file buttons, and supported-format
 chips. A muted GitHub icon under that card opens https://github.com/crizant/rowtation.
 Narrow and touch browsers use that same type, left-aligned, a pressable import card
-and a grouped action list, with the same GitHub icon centered under the list. Show CSV, TSV, JSON, NDJSON and XML as supported; there is no recent
+and a grouped action list, with the same GitHub icon centered under the list. Show CSV,
+TSV, JSON, NDJSON and XML as supported; there is no recent
 history. The home description says data stays in the browser. Large-file confirmation
 stays in the import review.
 
@@ -61,7 +63,8 @@ a stationary rounded frame. Below 900 points it opens contextually; never squeez
 the permanent sidebar beside a phone-sized grid. Use 44-point rows and targets.
 
 App Dialog centers explicitly on desktop and sits at the bottom below 640 points.
-The import review offers a format selector. Delimited formats use radio tiles for the separator and a checkbox for the header
+The import review offers a format selector. Delimited formats use radio tiles for the
+separator and a checkbox for the header
 row (it applies on import, not immediately), a measured size summary and, for
 large input, a warning with an "Import anyway" action.
 Its body scrolls when short viewports or large text need more room. Keep the
@@ -73,19 +76,34 @@ includes a base 20-point inset plus the browser safe area.
 
 Show implemented search, replace, sorting, editing, undo and modification counts.
 Use the shared dialog for export, with format cards, contextual options, mapping
-warnings, with Copy at the far left of the footer and Cancel and Download at the right. Keep the body scrollable and the
-actions visible on mobile. Do not draw fake window controls. CSV/TSV values get Text indicators; numeric/date inference would
-misrepresent the engine. An inspector distinguishes empty text, Null and Missing and reports canonical type counts. Structured format settings follow docs/structured-imports.md.
+warnings, with Copy at the far left of the footer and Cancel and Download at the right
+on desktop. Below 640 points, shared `DialogActions` puts the secondary action and
+Cancel on one row above the full-width primary action; import, export, cell editing and
+whole-value dialogs share these action lanes. Keep the body scrollable and the
+actions visible on mobile. Do not draw fake window controls. CSV/TSV values get Text
+indicators; numeric/date inference would
+misrepresent the engine. An inspector distinguishes empty text, Null and Missing and
+reports canonical type counts. Structured format settings follow
+docs/structured-imports.md.
 
 Clickable buttons and checkboxes use a pointer cursor; disabled controls use a
 not-allowed cursor and suppress interaction.
 
 Editing uses an accessible dialog with a touch-sized Save cell action. Open it
 with a double-press, F2, or Edit cell in the cell menu. Clear cell is in that
-menu. Find opens a compact bar: the query and match navigation come first.
-Case, regex, and all-columns or the selected column are compact toggles on
-that bar, and replacement stays closed until asked. Below 900 points the query
-keeps its own row so those controls do not shrink it. An empty query shows no
+menu. Find opens a structured bar: the query and its Close find action come first, then
+Search in and previous/next navigation share one row. Match status, Options and Replace
+share the following row on narrow screens. At 900–1199 points these controls share a
+row below the query. At 1200 points and above the whole toolbar occupies one row: the
+query takes surplus width, Search in has bounded width, and Close find sits at the
+trailing edge. A labeled Search in selector chooses All columns or a specific column
+by stable identity; its trigger truncates visually, while the list shows full names and
+column numbers to distinguish duplicate or empty headers. The trigger leads with
+the column number for duplicate names and labels unnamed columns explicitly.
+While the scope list is open, Find yields its Enter/Escape shortcuts to Select.
+Options reveals labeled case-sensitive and regular-expression checkboxes. Options and Replace keep fixed
+trailing action lanes; replacement stays closed until asked. Long column names and match
+snippets never enter that action row. An empty query shows no
 count; a search in flight, no hits, and errors each have their own status.
 Matching cells use a primary-token tint, and the active occurrence is marked
 in the preview or named in the bar when it lies past that preview. Active

@@ -4,6 +4,7 @@ import { Button } from "./Button";
 import { Checkbox } from "./Checkbox";
 import { Choice, ChoiceGroup } from "./Choice";
 import { Dialog } from "./Dialog";
+import { DialogActions } from "./DialogActions";
 import { Input } from "./Input";
 
 /** Transient export choices only; the retained Rust session owns every value. */
@@ -37,12 +38,10 @@ export function ExportDialog(props: { session: DocumentSession; name: string; on
   }
   return <Dialog title={`Export ${metadata.rowCount.toLocaleString()} ${metadata.rowCount === 1 ? "row" : "rows"}`}
     description="Choose a format and download or copy the full document." onClose={() => { if (!busy()) props.onClose(); }}
-    footer={<View class="flex-row flex-wrap items-center gap-2">
-      <Button label="Copy" quiet disabled={busy() || (!!warning() && !accepted())} onPress={() => void perform(true)} />
-      <View class="flex-1" />
-      <Button label="Cancel" quiet disabled={busy()} onPress={() => props.onClose()} />
-      <Button fullWidth={windowSize().width < 640} label={busy() ? "Exporting…" : "Download"} disabled={busy() || !filename().trim() || (!!warning() && !accepted())} onPress={() => void perform(false)} />
-    </View>}>
+    footer={<DialogActions
+      secondary={<Button label="Copy" quiet disabled={busy() || (!!warning() && !accepted())} onPress={() => void perform(true)} />}
+      cancel={<Button label="Cancel" quiet disabled={busy()} onPress={() => props.onClose()} />}
+      primary={<Button fullWidth={windowSize().width < 640} label={busy() ? "Exporting…" : "Download"} disabled={busy() || !filename().trim() || (!!warning() && !accepted())} onPress={() => void perform(false)} />} />}>
     <ChoiceGroup>
       <Each of={["csv", "tsv", "json", "ndjson", "xml"]}>{value =>
         <Choice mark={value().toUpperCase()} label={value().toUpperCase()} checked={format() === value()} disabled={busy()} onSelect={() => { format.set(value()); changed(); }} />

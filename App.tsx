@@ -8,6 +8,8 @@ import { Button } from "./components/Button";
 import { Choice, ChoiceGroup } from "./components/Choice";
 import { DataGrid, type CellSelection } from "./components/DataGrid";
 import { Dialog } from "./components/Dialog";
+import { DialogActions } from "./components/DialogActions";
+import { SearchScope } from "./components/SearchScope";
 import { bytes, count } from "./components/format";
 import { Icon } from "./components/Icon";
 import { Input } from "./components/Input";
@@ -56,12 +58,14 @@ function DocumentView(props: { document: OpenDocument; onClose: () => void }) {
   const sorting = signal<import("nsh/base").DataTableSort | null>(null);
   const finding = signal(false);
   const replacing = signal(false);
+  const searchOptions = signal(false);
   const menuPoint = signal<{ x: number; y: number } | null>(null);
   const term = signal("");
   const replacement = signal("");
   const sensitive = signal(false);
   const regex = signal(false);
   const scoped = signal(false);
+  const scopeOpen = signal(false);
   const scopeId = signal<number | null>(null);
   const results = signal<SearchResult>({ count: 0, current: null });
   const matchIndex = signal(0);
@@ -105,6 +109,7 @@ function DocumentView(props: { document: OpenDocument; onClose: () => void }) {
   const full = signal<string | null>(null);
   const copyLabel = signal("Copy value");
   const wide = () => windowSize().width >= 900;
+  const roomy = () => windowSize().width >= 1200;
   // Profiling runs in slices between frames; each new column or disposal ends the previous run.
   function ensureProfile() {
     const target = column();
@@ -355,6 +360,7 @@ function DocumentView(props: { document: OpenDocument; onClose: () => void }) {
   function closeFind() {
     findInput?.blur();
     finding.set(false);
+    scopeOpen.set(false);
     replacing.set(false);
     attempt(() => runSearch(false));
     clearTimeout(focusTimer);
@@ -370,16 +376,9 @@ function DocumentView(props: { document: OpenDocument; onClose: () => void }) {
     }
     revealMatch(matchIndex() + delta);
   }
-  function toggleOption(kind: "case" | "regex" | "scope") {
+  function toggleOption(kind: "case" | "regex") {
     if (kind === "case") sensitive.set(!sensitive());
     else if (kind === "regex") regex.set(!regex());
-    else if (scoped()) scoped.set(false);
-    else {
-      const id = column()?.id;
-      if (id == null) return;
-      scopeId.set(id);
-      scoped.set(true);
-    }
     attempt(() => runSearch(true));
   }
   let blurEditor = () => {};
@@ -427,7 +426,7 @@ function DocumentView(props: { document: OpenDocument; onClose: () => void }) {
   keymap.bind("f2", () => { if (finding() || editing()) return; beginEdit(); });
   keymap.bind("mod+f", openFind);
   effect(() => {
-    if (!finding() || exporting()) return;
+    if (!finding() || exporting() || scopeOpen()) return;
     if (editing()) {
       keymap.bind("shift+enter", () => editDraft.set(`${editDraft()}\n`), { when: "always" });
       return;
@@ -436,11 +435,6 @@ function DocumentView(props: { document: OpenDocument; onClose: () => void }) {
     keymap.bind("shift+enter", () => stepMatch(-1), { when: "always" });
     keymap.bind("escape", closeFind, { when: "always" });
   });
-  function scopeLabel() {
-    if (!scoped()) return "All";
-    const name = document.columns.find(item => item.id === scopeId())?.name || "Column";
-    return name.length > 14 ? `${name.slice(0, 13)}…` : name;
-  }
   function gridMatch() {
     const match = activeMatch();
     if (!match || !results().count) return null;
@@ -452,13 +446,13 @@ function DocumentView(props: { document: OpenDocument; onClose: () => void }) {
   const menuPopup = "min-w-44 overflow-hidden rounded-xl border border-border/70 bg-background p-1 shadow-lg";
   return <View class="relative flex-1 min-h-0 min-w-0 bg-background">
     <Toolbar accessibilityLabel="Document toolbar" class="min-h-14 shrink-0 flex-row items-center gap-2 border-b border-border/70 px-3 py-2 md:gap-3 md:px-4">
-      <Button label="Close document" quiet compact={platform.desktop} icon="caret-left" onPress={() => confirmDiscard(() => { disposeDocument(); props.onClose(); })} testID="close-document" />
+      <Button label="Close document" quiet compact={wide()} icon="caret-left" onPress={() => confirmDiscard(() => { disposeDocument(); props.onClose(); })} testID="close-document" />
       <View class={(wide() ? "flex-row items-center gap-2 " : "justify-center gap-0.5 ") + "min-w-0 flex-1"}>
         <Text class="line-clamp-1 text-[15px] font-semibold text-foreground">{document.name}</Text>
         <If when={wide()}><Badge label={format()} /></If>
         <If when={!wide()}><Text class="line-clamp-1 text-[11px] font-medium text-muted-foreground">{format()}</Text></If>
       </View>
-      <Button label={finding() ? "Close find" : "Find"} quiet compact={wide()} icon={finding() ? "x" : "magnifying-glass"} onPress={toggleFind}
+      <Button label="Find" quiet compact={wide()} icon="magnifying-glass" selected={finding()} onPress={toggleFind}
         tooltip={finding() ? undefined : `Find ${keymap.label("mod+f")}`} />
       <Button label="Undo" quiet compact={wide()} icon="arrow-counter-clockwise" disabled={!edits().canUndo} onPress={() => history(false)} tooltip={`Undo ${keymap.label("mod+z")}`} />
       <Button label="Redo" quiet compact={wide()} icon="arrow-clockwise" disabled={!edits().canRedo} onPress={() => history(true)} tooltip={`Redo ${keymap.label("mod+shift+z")}`} />
@@ -466,28 +460,42 @@ function DocumentView(props: { document: OpenDocument; onClose: () => void }) {
     </Toolbar>
     <If when={finding()}>
       <View class="shrink-0 gap-2 border-b border-border/70 px-3 py-2">
-        {/* Narrow screens keep the query on its own row so the field stays usable. */}
-        <View class={wide() ? "flex-row items-center gap-2" : "gap-2"}>
-          <View class={"flex-row items-center gap-2" + (wide() ? " min-w-0 flex-1" : "")}>
+        <View class={roomy() ? "flex-row items-center gap-3" : "gap-2"}>
+          <View class={"flex-row items-center gap-2" + (roomy() ? " min-w-64 flex-1" : "")}>
             <View class="min-w-0 flex-1"><Input label="Find" placeholder="Find" testID="find-input" autoFocus value={term()} selectedRange={querySelection()} ref={node => { findInput = node; if (selectQuery) focusQuery(); }}
               onChange={value => { querySelection.set(undefined); term.set(value); if (!value) { clearTimeout(searchTimer); searchTimer = undefined; pending.set(false); attempt(() => runSearch(false)); return; } queueSearch(); }} /></View>
-            <Button label="Previous" icon="caret-left" quiet compact={wide()} disabled={pending() || !results().count} onPress={() => stepMatch(-1)} />
-            <Button label="Next" icon="caret-right" quiet compact={wide()} disabled={pending() || !results().count} onPress={() => stepMatch(1)} />
+            <If when={!roomy()}><Button label="Close find" icon="x" quiet compact={wide()} onPress={closeFind} /></If>
           </View>
-          <View class="flex-row flex-wrap items-center gap-2">
-            <Text testID="search-count" class={(wide() ? "shrink-0" : "min-w-32 flex-1") + " line-clamp-1 text-xs text-muted-foreground"}>{searchStatus()}</Text>
-            <If when={activeSnippet()}><Text testID="active-match" class="max-w-36 line-clamp-1 text-xs font-medium text-foreground underline" style={{ textDecorationLine: "underline" }}>{activeSnippet()}</Text></If>
-            <If when={pending()}><Button label="Cancel search" quiet compact={wide()} onPress={() => { cancelSearch(); searchCancelled.set(true); }} /></If>
-            <Button label="Aa" accessibilityLabel="Case sensitive" tight quiet compact={wide()} selected={sensitive()} tooltip="Case sensitive" onPress={() => toggleOption("case")} />
-            <Button label=".*" accessibilityLabel="Regex" tight quiet compact={wide()} selected={regex()} tooltip="Regex" onPress={() => toggleOption("regex")} />
-            <Button label={scopeLabel()} accessibilityLabel={scoped() ? "Selected column" : "All columns"} tight quiet compact={wide()} selected={scoped()} disabled={!column() && !scoped()} tooltip={scoped() ? "Selected column" : "All columns"} onPress={() => toggleOption("scope")} />
-            <Button label={replacing() ? "Hide replace" : "Replace…"} quiet compact={wide()} onPress={() => replacing.set(!replacing())} />
+          <View class={roomy() ? "shrink-0 flex-row items-center gap-3" : wide() ? "flex-row items-center gap-3" : "gap-2"}>
+            <View class={"min-w-0 flex-row items-center gap-2" + (wide() && !roomy() ? " flex-1" : "")}>
+              <View class={roomy() ? "w-56 shrink-0" : "min-w-0 flex-1"}>
+                <SearchScope open={scopeOpen()} onOpenChange={open => scopeOpen.set(open)} compact={wide()} columns={document.columns} value={scoped() ? scopeId() : null} onChange={id => {
+                  scopeId.set(id); scoped.set(id != null); attempt(() => runSearch(true));
+                }} />
+              </View>
+              <Button label="Previous" icon="caret-left" quiet compact={wide()} disabled={pending() || !results().count} onPress={() => stepMatch(-1)} />
+              <Button label="Next" icon="caret-right" quiet compact={wide()} disabled={pending() || !results().count} onPress={() => stepMatch(1)} />
+            </View>
+            <View class={"flex-row items-center gap-2" + (wide() ? " min-w-80" : "")}>
+              <Text testID="search-count" class="min-w-0 flex-1 text-xs text-muted-foreground">{searchStatus()}</Text>
+              <Button label={searchOptions() ? "Options ▴" : "Options"} quiet compact={wide()} selected={searchOptions() || sensitive() || regex()} onPress={() => searchOptions.set(!searchOptions())} />
+              <Button label={replacing() ? "Hide replace" : "Replace…"} quiet compact={wide()} onPress={() => replacing.set(!replacing())} />
+            </View>
           </View>
+          <If when={roomy()}><Button label="Close find" icon="x" quiet compact onPress={closeFind} /></If>
         </View>
+        <If when={pending()}><View class="items-end"><Button label="Cancel search" quiet compact={wide()} onPress={() => { cancelSearch(); searchCancelled.set(true); }} /></View></If>
+        <If when={searchOptions()}>
+          <View class={wide() ? "flex-row items-center gap-6 rounded-xl bg-muted/30 px-3" : "gap-2 rounded-xl bg-muted/30 p-3"}>
+            <Checkbox label="Case sensitive" checked={sensitive()} onChange={() => toggleOption("case")} />
+            <Checkbox label="Regular expression" checked={regex()} onChange={() => toggleOption("regex")} />
+          </View>
+        </If>
+        <If when={activeSnippet()}><Text testID="active-match" class="line-clamp-2 text-xs text-muted-foreground">{activeSnippet()}</Text></If>
         <If when={replacing()}>
           <View class={wide() ? "flex-row items-center gap-2" : "gap-2"}>
             <View class="min-w-0 flex-1"><Input label="Replace with" placeholder="Replace with" testID="replace-input" value={replacement()} onChange={value => replacement.set(value)} /></View>
-            <View class="flex-row items-center gap-2">
+            <View class="flex-row items-center justify-end gap-2">
               <Button label="Replace" quiet compact={wide()} disabled={pending() || !results().count || !!operationError()} onPress={() => replace(false)} />
               <Button label="Replace all" compact={wide()} disabled={pending() || !results().count || !!operationError()} onPress={() => replace(true)} />
             </View>
@@ -534,16 +542,14 @@ function DocumentView(props: { document: OpenDocument; onClose: () => void }) {
     </View>
     <If when={exporting()}><ExportDialog session={document.session} name={document.name} onClose={() => exporting.set(false)} /></If>
     <If when={info() && windowSize().width < 900}>
-      <Dialog title="Column information" onClose={closeInfo}>
+      <Dialog title="Column information" onClose={closeInfo} footer={<DialogActions primary={<Button label="Done" fullWidth={windowSize().width < 640} onPress={closeInfo} />} />}>
         <Scroll style={{ maxHeight: windowSize().height * 0.6 }} class="min-h-0"><Inspector column={column()} profile={profile()} metadata={metadata()} selection={selection()} progress={progress()}
           copyLabel={copyLabel()} onShowValue={showValue} onCopyValue={() => void copyValue()} /></Scroll>
-        <Button label="Done" compact={platform.desktop} onPress={closeInfo} />
       </Dialog>
     </If>
     <If when={editing()}>
-      <Dialog title={`Edit ${column()?.name || "cell"}`} onClose={cancelEdit} footer={<View class="flex-row justify-end gap-2">
-        <Button label="Cancel" quiet onPress={cancelEdit} /><Button label="Save cell" onPress={() => commitEdit()} />
-      </View>}>
+      <Dialog title={`Edit ${column()?.name || "cell"}`} onClose={cancelEdit} footer={<DialogActions cancel={<Button label="Cancel" quiet onPress={cancelEdit} />}
+        primary={<Button label="Save cell" fullWidth={windowSize().width < 640} onPress={() => commitEdit()} />} />}>
         <Text class="text-xs text-muted-foreground">Changed values are saved as text. Unchanged numbers and booleans keep their type. Clear cell saves empty text.</Text>
         <EditInput value={editDraft()} onChange={value => editDraft.set(value)} onCommit={commitEdit} onCancel={cancelEdit} onBind={blur => { blurEditor = blur; }} />
         <If when={operationError()}><Text class="text-xs text-destructive">{operationError()}</Text></If>
@@ -789,7 +795,7 @@ export function App() {
     finally { busy.set(false); }
   }
 
-  const compact = platform.desktop;
+  const compact = () => platform.desktop && windowSize().width >= 640;
   const size = () => { const result = analysis(); return structuredSize() ?? (result ? (delimiter() === "\t" ? result.tab : result.comma) : null); };
   const summary = () => {
     const result = analysis(), measured = size();
@@ -826,20 +832,20 @@ export function App() {
           : mode() === "confirm" ? `This file is ${bytes(pending()?.size ?? 0)}. Rowtation has not read it yet.`
           : analysis()?.ambiguous ? "Confirm the format below; detection is uncertain." : "Format detected. Review the options before importing."}
         onClose={dismiss} footer={
-          <View class="flex-row flex-wrap items-center justify-end gap-2">
-            <If when={mode() === "paste" || (error() && !busy())}><Button label="Choose another file…" quiet compact={compact} onPress={pick} /></If>
-            <View class="flex-1" />
-            <Button label="Cancel" quiet compact={compact} onPress={dismiss} />
+          <DialogActions
+            secondary={<If when={mode() === "paste" || (error() && !busy())}><Button label="Choose file…" quiet compact={compact()} onPress={pick} /></If>}
+            cancel={<Button label="Cancel" quiet compact={compact()} onPress={dismiss} />}
+            primary={<>
             <If when={mode() === "paste"}>
-              <Button label="Review import" compact={compact} disabled={!paste()} onPress={reviewPaste} />
+              <Button label="Review import" fullWidth={windowSize().width < 640} compact={compact()} disabled={!paste()} onPress={reviewPaste} />
             </If>
             <If when={mode() === "confirm"}>
-              <Button label={busy() ? "Reading…" : "Read file"} compact={compact} disabled={busy() || !pending()} onPress={readLarge} />
+              <Button fullWidth={windowSize().width < 640} label={busy() ? "Reading…" : "Read file"} compact={compact()} disabled={busy() || !pending()} onPress={readLarge} />
             </If>
             <If when={mode() === "review"}>
-              <Button label={busy() ? "Importing…" : size()?.large && !accepted() ? "Import anyway" : "Import document"} compact={compact} disabled={busy() || !draft()} onPress={importDocument} />
+              <Button fullWidth={windowSize().width < 640} label={busy() ? "Importing…" : size()?.large && !accepted() ? "Import anyway" : "Import document"} compact={compact()} disabled={busy() || !draft()} onPress={importDocument} />
             </If>
-          </View>
+          </>} />
         }>
         <If when={mode() === "paste"}>
           <Input label="Data to import" testID="paste-input" value={paste()} onChange={value => paste.set(value)} multiline placeholder={"name,city\nMia,Brisbane"} />
