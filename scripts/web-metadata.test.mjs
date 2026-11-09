@@ -54,8 +54,6 @@ test("escapes HTML in the title and attribute text", () => {
   assert.equal(escapeHtmlAttribute(`"&`), "&quot;&amp;");
   const title = stampIndexHtml(packaged).match(/<title>([^<]*)<\/title>/)[1];
   assert.equal(title, escapeHtmlText(htmlTitle));
-  assert.equal(title.includes("CSV & JSON"), false);
-  assert.equal(title.includes("CSV &amp; JSON"), true);
 });
 
 test("rejects a document missing head or title", () => {

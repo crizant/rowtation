@@ -42,7 +42,7 @@ test("XML edits survive cancelled Back and invalid input can be reviewed from ho
   await app.press("close-document"); await app.press("Paste from clipboard"); await app.clear("paste-input");
   await app.paste("paste-input", { text: '<!DOCTYPE rows><rows/>' }); await app.press("Review import"); await app.press("Import document");
   expect(app.texts().join("\n")).toContain("INVALID_XML");
-  await app.press("Cancel"); await app.waitFor("Rowtation");
+  await app.press("Cancel"); await app.waitFor("id:home-scroll");
   expect(app.texts()).not.toContain("edited");
 });
 
@@ -60,7 +60,7 @@ test("structured review defers parsing and reuses the prepared large candidate",
   const app = await open("./App.tsx", { width: 1280, height: 800, clipboard: input });
   await app.keyboard.press("ctrl+shift+d");
   await app.press("Paste from clipboard"); await app.press("Review import");
-  expect(app.texts().join("\n")).toContain("Row and column counts are checked when you import.");
+  expect(app.shows("id:import-summary")).toBe(true);
   expect(app.texts().filter(t => t.startsWith("Parse: ")).length).toBe(0);
   await app.press("Import document"); await app.waitFor("This is a large dataset");
   expect(app.texts().join("\n")).toContain("513 rows · 513 columns");
@@ -76,11 +76,11 @@ test("malformed structured paste remains unparsed until Import", async () => {
   await app.press("Paste from clipboard");
   await app.paste("paste-input", {text: input});
   await app.press("Review import");
-  expect(app.texts().join("\n")).toContain("Row and column counts are checked when you import.");
+  expect(app.shows("id:import-summary")).toBe(true);
   expect(app.texts().join("\n")).not.toContain("INVALID_JSON");
   await app.press("Import document");
   expect(app.texts().join("\n")).toContain("INVALID_JSON");
-  await app.press("Cancel"); await app.waitFor("Rowtation");
+  await app.press("Cancel"); await app.waitFor("id:home-scroll");
 });
 
 test("Back returns home before reviewing and cancelling another structured dataset", async () => {
@@ -89,10 +89,10 @@ test("Back returns home before reviewing and cancelling another structured datas
   await app.waitFor("1 row · 1 column"); await app.press("Mia"); await app.keyboard.press("f2");
   await app.clear("cell-draft"); await app.paste("cell-draft", {text: "edited"}); await app.press("Save cell");
   app.onDialog(() => "Discard changes");
-  await app.press("close-document"); await app.waitFor("Rowtation");
+  await app.press("close-document"); await app.waitFor("id:home-scroll");
   await app.press("Paste from clipboard"); await app.clear("paste-input");
   await app.paste("paste-input", {text: Array.from({length: 513}, (_, i) => `{"f${i}":${i}}`).join("\n")});
   await app.press("Review import"); await app.press("Import document"); await app.waitFor("This is a large dataset");
-  await app.press("Cancel"); await app.waitFor("Rowtation");
+  await app.press("Cancel"); await app.waitFor("id:home-scroll");
   expect(app.texts()).not.toContain("edited");
 });

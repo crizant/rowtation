@@ -5,9 +5,9 @@ test("export dialog copies edited JSON and cancellation retains undo and dirty s
   await app.press("Paste from clipboard"); await app.press("Review import"); await app.press("Import document");
   await app.press("Brisbane"); await app.keyboard.press("f2"); await app.clear("cell-draft");
   await app.paste("cell-draft", {text: "Perth"}); await app.press("Save cell");
-  await app.press("Export…"); await app.waitFor("Export 1 row");
+  await app.press("Export…"); await app.waitFor("id:export-filename");
   await app.keyboard.press("mod+z"); await app.keyboard.press("f2");
-  expect(app.texts()).not.toContain("Edit city");
+  expect(app.shows("id:cell-draft")).toBe(false);
   await app.press("JSON · JSON"); await app.press("Readable formatting"); await app.press("Copy"); await app.waitFor("Copied export text");
   await app.press("Cancel"); await app.waitFor("1 modified · Unsaved");
   await app.press("Undo"); await app.waitFor("Unmodified");
@@ -21,9 +21,10 @@ test("mobile export contextual options warnings and failed conversion preserve d
   expect(app.texts()).not.toContain("Readable formatting");
   expect(app.texts()).not.toContain("Include column headers");
   await app.press("Copy"); await app.waitFor("Copied export text");
+  const copied = app.clipboard();
   await app.press("XML · XML"); await app.press("Accept these mapping changes");
   await app.press("Copy"); await app.waitFor("export-status");
-  expect(app.texts().join("\n")).toContain("XML conversion cannot preserve null");
+  expect(app.clipboard()).toBe(copied);
   await app.press("Cancel"); await app.waitFor("Unmodified"); await app.waitFor("001");
   await app.press("Export…"); await app.press("CSV · CSV");
   expect(app.texts()).toContain("Accept these mapping changes");

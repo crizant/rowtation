@@ -573,7 +573,7 @@ function DocumentView(props: { document: OpenDocument; onClose: () => void }) {
 function DiagnosticsPanel() {
   const memory = () => { measurements(); return wasmMemory(); };
   return <View testID="diagnostics" class="absolute bottom-3 right-3 w-80 max-w-[92%] gap-1 rounded-xl border border-border bg-background p-3 shadow-lg">
-    <Text class="text-xs font-semibold text-foreground">Diagnostics · local only</Text>
+    <Text class="text-xs font-semibold text-foreground">Diagnostics</Text>
     <Text class="text-xs text-muted-foreground">{`WebAssembly memory ${bytes(memory())} (peak, never shrinks)`}</Text>
     <Each of={measurements()}>{item => <Text class="text-xs text-foreground">{`${item().label}: ${item().ms.toFixed(1)} ms${item().detail ? ` · ${item().detail}` : ""}`}</Text>}</Each>
     <Text class="text-xs text-muted-foreground">{`${keymap.label("ctrl+shift+d")} hides this panel and stops measuring.`}</Text>

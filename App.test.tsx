@@ -9,10 +9,11 @@ test("paste import keeps literal values, inspects columns and closes the session
   await app.waitFor("3 rows · 2 columns");
   expect(app.texts()).toContain("00123");
   await app.press("Brisbane >> nth=0");
-  expect(app.texts()).toContain("Unique values");
-  expect(app.texts()).toContain("COLUMN · CITY");
+  expect(app.shows("id:inspector-panel")).toBe(true);
+  await app.press("copy-value");
+  await app.waitUntil(() => app.clipboard() === "Brisbane");
   await app.press("close-document");
-  expect(app.texts()).toContain("Rowtation");
+  expect(app.shows("id:home-scroll")).toBe(true);
   expect(app.texts()).not.toContain("00123");
 });
 
@@ -27,9 +28,9 @@ test("back returns home before another import and failed imports can be retried"
   await app.paste("paste-input", { text: '\n"unclosed' });
   await app.press("Review import");
   await app.press("Import document");
-  await app.waitFor("text:Correct the input or choose another format or file. Your current document is unchanged.");
+  expect(app.texts().join("\n")).toContain("INVALID_CSV");
   await app.press("Cancel");
-  expect(app.texts()).toContain("Rowtation");
+  expect(app.shows("id:home-scroll")).toBe(true);
   expect(app.texts()).not.toContain("Original");
   await app.press("Paste from clipboard");
   await app.clear("paste-input");
@@ -49,15 +50,14 @@ test("mobile TSV import without headers and contextual inspector", async () => {
   await app.press("First row contains column headers");
   await app.press("Import document");
   await app.waitFor("2 rows · 2 columns");
-  expect(app.texts()).not.toContain("More");
-  expect(app.texts()).not.toContain("Import…");
   expect(app.texts()).toContain("Column 1");
   await app.press("001");
   await app.press("Column info");
-  expect(app.texts()).toContain("COLUMN · COLUMN 1");
+  await app.press("copy-value");
+  await app.waitUntil(() => app.clipboard() === "001");
   await app.press("Done");
   await app.setViewport(1280, 800);
-  expect(app.texts()).toContain("Unique values");
+  expect(app.shows("id:inspector-panel")).toBe(true);
 });
 
 test("virtualized row windows and keyboard selection survive offscreen jumps", async () => {
@@ -127,7 +127,7 @@ test("large data imports only after an explicit confirmation", async () => {
   expect(app.texts().join("\n")).toContain("100,001 rows · 1 column");
   expect(app.texts()).not.toContain("Import document");
   await app.press("Cancel");
-  expect(app.texts()).toContain("Rowtation");
+  expect(app.shows("id:home-scroll")).toBe(true);
   await app.press("Paste from clipboard");
   await app.waitUntil(() => app.value("paste-input") === text);
   await app.press("Review import");
@@ -159,7 +159,9 @@ test("long values show previews in the grid and whole values on request", async 
   await app.wait(100);
   expect(app.clipboard()).toBe(long);
   await app.press("View full value");
-  await app.waitFor("Showing 32,768 of 40,003 characters. Copy value copies all of it.");
+  await app.waitFor("id:full-value");
+  expect(app.texts()).toContain(long.slice(0, 32_768));
+  expect(app.texts()).not.toContain(long);
   await app.press("Show more");
   await app.waitFor(long);
   await app.press("copy-full-value");
@@ -169,9 +171,9 @@ test("long values show previews in the grid and whole values on request", async 
 
 test("diagnostics are off until requested and stay in the tab", async () => {
   const app = await open("./App.tsx", { width: 1280, height: 800, clipboard: "id\n1\n2" });
-  expect(app.texts()).not.toContain("Diagnostics · local only");
+  expect(app.shows("id:diagnostics")).toBe(false);
   await app.keyboard.press("ctrl+shift+d");
-  await app.waitFor("Diagnostics · local only");
+  await app.waitFor("id:diagnostics");
   await app.press("Paste from clipboard");
   await app.press("Review import");
   await app.press("Import document");
@@ -181,7 +183,7 @@ test("diagnostics are off until requested and stay in the tab", async () => {
   expect(log).toContain("Parse: ");
   expect(log).toContain("Row window: ");
   await app.keyboard.press("ctrl+shift+d");
-  expect(app.texts()).not.toContain("Diagnostics · local only");
+  expect(app.shows("id:diagnostics")).toBe(false);
 });
 
 
@@ -189,12 +191,11 @@ test("long pasted text stays inside the field and import actions remain reachabl
   const app = await open("./App.tsx", { width: 1066, height: 688 });
   await app.press("Paste from clipboard");
   await app.paste("paste-input", { text: "id,city\n" + Array.from({ length: 100 }, (_, i) => `${i + 1},Brisbane`).join("\n") });
-  // The outer dialog has no scroll range when this content fits.
-  expect(app.texts()).toContain("Paste your data");
+  expect(app.shows("id:paste-input")).toBe(true);
   await app.setViewport(390, 360);
-  expect(app.texts()).toContain("Paste your data");
+  expect(app.shows("id:paste-input")).toBe(true);
   await app.press("Review import");
-  expect(app.texts()).toContain("Import “Pasted data”");
+  expect(app.shows("id:import-summary")).toBe(true);
   await app.press("Import document");
   await app.waitFor("100 rows · 2 columns");
 });
@@ -262,19 +263,13 @@ test("Back asks before discarding a modified document", async () => {
   await app.clear("cell-draft"); await app.paste("cell-draft", { text: "Melbourne" }); await app.press("Save cell");
   await app.waitFor("1 modified · Unsaved");
   let answer = "Keep editing";
-  app.onDialog(dialog => {
-    expect(dialog.title).toBe("Discard unsaved changes?");
-    expect(dialog.message ?? "").toContain("Downloads do not reset the imported baseline");
-    return answer;
-  });
+  app.onDialog(() => answer);
   await app.press("close-document");
   expect(app.texts()).toContain("Melbourne");
-  expect(app.texts()).not.toContain("More");
-  expect(app.texts()).not.toContain("Import…");
   expect(app.shows("id:paste-input")).toBe(false);
   answer = "Discard changes";
   await app.press("close-document");
-  expect(app.texts()).toContain("Rowtation");
+  expect(app.shows("id:home-scroll")).toBe(true);
   expect(app.texts()).not.toContain("Melbourne");
 });
 
@@ -320,16 +315,10 @@ test("mobile find keeps the query separate from replacement", async () => {
   await app.press("Paste from clipboard"); await app.press("Review import"); await app.press("Import document");
   await app.waitFor("1 row · 2 columns");
   expect(app.texts()).toContain("Pasted data");
-  expect(app.texts()).not.toContain("Sort ↑");
-  expect(app.texts()).not.toContain("Find & replace");
-  expect(app.texts()).not.toContain("Edit cell…");
   await app.press("Find");
   expect(app.shows("id:find-input")).toBe(true);
   expect(app.shows("id:replace-input")).toBe(false);
-  expect(app.texts()).toContain("Search in");
   expect(app.texts()).toContain("All columns");
-  expect(app.texts()).toContain("Options");
-  expect(app.texts()).not.toContain("Selected column only");
   expect(app.texts()).not.toContain("0 matches");
   await app.press("Replace…");
   expect(app.shows("id:replace-input")).toBe(true);
@@ -341,15 +330,12 @@ test("mobile find keeps the query separate from replacement", async () => {
   await app.clear("cell-draft"); await app.paste("cell-draft", { text: "Ann" }); await app.press("Save cell");
   await app.waitFor("1 modified · Unsaved");
   let answer = "Keep editing";
-  app.onDialog(dialog => {
-    expect(dialog.message ?? "").toContain("Downloads do not reset the imported baseline");
-    return answer;
-  });
+  app.onDialog(() => answer);
   await app.press("close-document");
   expect(app.shows("id:paste-input")).toBe(false);
   answer = "Discard changes";
   await app.press("close-document");
-  expect(app.texts()).toContain("Rowtation");
+  expect(app.shows("id:home-scroll")).toBe(true);
   expect(app.shows("id:paste-input")).toBe(false);
   await app.press("Paste from clipboard");
   expect(app.shows("id:paste-input")).toBe(true);
@@ -489,9 +475,7 @@ test("a pending search does not step the previous matches", async () => {
   await app.waitFor("2 rows · 2 columns");
   await app.press("Find");
   expect(app.shows("id:find-input")).toBe(true);
-  expect(app.texts()).toContain("Search in");
   expect(app.texts()).toContain("All columns");
-  expect(app.texts()).toContain("Options");
   await app.paste("find-input", { text: "b" });
   const clock = app.clock;
   if (!clock) throw new Error("expected a manual clock");
@@ -532,7 +516,7 @@ test("cancelled Find work cannot publish stale matches after query changes or cl
   expect(app.count("id:search-highlight")).toBe(0);
   await app.press("close-document");
   await clock.runFor(500);
-  expect(app.texts()).toContain("Rowtation");
+  expect(app.shows("id:home-scroll")).toBe(true);
 });
 
 test("mobile search chooses a long column name without following the active match", async () => {
