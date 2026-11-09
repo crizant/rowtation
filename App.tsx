@@ -598,7 +598,9 @@ function Home(props: { dragging: boolean; onPick: () => void; onPaste: () => voi
     <Each of={["CSV", "TSV", "JSON", "NDJSON", "XML"]}>{label => <View class="rounded-full border border-border/60 bg-background px-2.5 py-1 shadow-sm">
       <Text class="text-xs font-medium text-foreground">{label()}</Text></View>}</Each>
   </View>;
-  return <Scroll class="flex-1 min-h-0" contentStyle={{ flexGrow: 1 }}>
+  // Bound descendant overflow to the content box: NSH 0.4 otherwise includes
+  // centered descendants in the scroll extent even when the content fits.
+  return <Scroll testID="home-scroll" class="flex-1 min-h-0" contentClass="grow overflow-hidden">
     <If when={windowSize().width >= 640} else={
       <View class="flex-1 justify-center px-5 py-10">
         <View class="w-full max-w-[560px] gap-6 self-center">

@@ -66,6 +66,32 @@ try {
   await send('Emulation.setDeviceMetricsOverride', { width: 1280, height: 800, deviceScaleFactor: Number(args.dpr ?? 2), mobile: false });
   await send('Page.navigate', { url: `http://127.0.0.1:${server.address().port}/` });
   await until(`!!document.querySelector('#rowtation-file-input')`);
+  // The home must not scroll through empty space, but short screens must still
+  // reach the final action. Compare actual browser scroll bounds, not snapshots.
+  for (const [width, height] of [[1280, 800], [390, 844], [320, 568], [1280, 480]]) {
+    await send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: false });
+    await sleep(150);
+    const bounds = await evaluate(`(() => {
+      const scroll = document.querySelector('[data-testid="home-scroll"]');
+      const content = [...scroll.children].find(el => el.classList.contains('nsh-v'));
+      scroll.scrollTop = 100000;
+      const link = document.querySelector('[data-testid="project-link"]');
+      return { viewport: scroll.clientHeight, content: content.getBoundingClientRect().height,
+        extent: scroll.scrollHeight, width: scroll.clientWidth, scrollWidth: scroll.scrollWidth,
+        top: scroll.scrollTop, bottom: link.getBoundingClientRect().bottom,
+        edge: scroll.getBoundingClientRect().bottom };
+    })()`);
+    if (Math.abs(bounds.extent - Math.max(bounds.viewport, bounds.content)) > 1)
+      throw new Error(`Home has empty scroll space at ${width}×${height}: ${JSON.stringify(bounds)}`);
+    if (bounds.scrollWidth !== bounds.width) throw new Error('Home overflows horizontally');
+    if (bounds.content <= bounds.viewport && bounds.top !== 0) throw new Error('Fitting home can still scroll');
+    if (bounds.content > bounds.viewport && (bounds.top === 0 || bounds.bottom > bounds.edge + 1))
+      throw new Error('Short home cannot reach GitHub');
+    console.log(`PASS home scroll bounds ${width}×${height}: ${bounds.extent}px`);
+  }
+  await send('Emulation.setDeviceMetricsOverride', { width: 1280, height: 800, deviceScaleFactor: Number(args.dpr ?? 2), mobile: false });
+  await evaluate(`document.querySelector('[data-testid="home-scroll"]').scrollTop = 0`);
+  await sleep(100);
   await send('Browser.setDownloadBehavior', { behavior: 'allow', downloadPath: profile, eventsEnabled: true });
   await send('Browser.grantPermissions', {origin: `http://127.0.0.1:${server.address().port}`, permissions: ['clipboardReadWrite', 'clipboardSanitizedWrite']});
   await evaluate(`globalThis.__exportUrls=[];globalThis.__exportRevoked=[];

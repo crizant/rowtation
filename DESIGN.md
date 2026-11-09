@@ -4,6 +4,8 @@ The current target is web, on desktop and mobile browsers. Native desktop, mobil
 and TUI builds are outside this scaffold's scope.
 
 The home/import workflow and editable virtualized inspection grid are implemented.
+The home scrolls only when its content exceeds the viewport; short screens keep
+the final action reachable.
 The root fills its surface and respects device safe areas. The shared semantic
 button supports keyboard, touch and pointer input.
 
