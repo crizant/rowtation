@@ -98,8 +98,10 @@ row below the query. At 1200 points and above the whole toolbar occupies one row
 query takes surplus width, Search in has bounded width, and Close find sits at the
 trailing edge. A labeled Search in selector chooses All columns or a specific column
 by stable identity; its trigger truncates visually, while the list shows full names and
-column numbers to distinguish duplicate or empty headers. Options reveals labeled
-case-sensitive and regular-expression checkboxes. Options and Replace keep fixed
+column numbers to distinguish duplicate or empty headers. The trigger leads with
+the column number for duplicate names and labels unnamed columns explicitly.
+While the scope list is open, Find yields its Enter/Escape shortcuts to Select.
+Options reveals labeled case-sensitive and regular-expression checkboxes. Options and Replace keep fixed
 trailing action lanes; replacement stays closed until asked. Long column names and match
 snippets never enter that action row. An empty query shows no
 count; a search in flight, no hits, and errors each have their own status.

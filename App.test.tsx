@@ -557,3 +557,45 @@ test("mobile search chooses a long column name without following the active matc
   await app.press("Replace all");
   await app.waitFor("2 replacements in 2 cells");
 });
+
+test("scope popup owns Escape Enter and arrow keys before Find", async () => {
+  const app = await open("./App.tsx", { width: 1280, height: 800, platform: "macos", clipboard: "name,other\nneedle,needle\nplain,needle" });
+  await app.press("Paste from clipboard"); await app.press("Review import"); await app.press("Import document");
+  await app.press("Find"); await app.paste("find-input", { text: "needle" });
+  await app.waitFor("1 of 3 matches");
+  await app.press("id:search-scope");
+  expect(app.shows("text:name · Column 1")).toBe(true);
+  await app.keyboard.press("escape");
+  expect(app.shows("id:find-input")).toBe(true);
+  expect(app.shows("text:name · Column 1")).toBe(false);
+  await app.keyboard.press("arrowdown");
+  expect(app.shows("text:name · Column 1")).toBe(true);
+  await app.keyboard.press("arrowdown");
+  await app.keyboard.press("enter");
+  await app.waitFor("1 of 1 matches");
+  expect(app.shows("id:find-input")).toBe(true);
+  await app.setViewport(390, 844);
+  await app.press("id:search-scope");
+  await app.keyboard.press("arrowdown");
+  await app.keyboard.press("arrowup");
+  await app.keyboard.press("arrowdown");
+  await app.keyboard.press("enter");
+  await app.waitFor("1 of 2 matches");
+  await app.press("Next"); await app.waitFor("2 of 2 matches");
+  await app.keyboard.press("escape");
+  expect(app.shows("id:find-input")).toBe(false);
+});
+
+test("scope trigger distinguishes duplicate and unnamed columns", async () => {
+  const app = await open("./App.tsx", { width: 390, height: 844, clipboard: "name,,name,   \nneedle,blank,needle,space" });
+  await app.press("Paste from clipboard"); await app.press("Review import"); await app.press("Import document");
+  await app.press("Find");
+  await app.press("id:search-scope"); await app.press("text:name · Column 3");
+  expect(app.texts()).toContain("Column 3 · name");
+  await app.press("id:search-scope"); await app.press("text:name · Column 1");
+  expect(app.texts()).toContain("Column 1 · name");
+  await app.press("id:search-scope"); await app.press("text:Unnamed column · Column 2");
+  expect(app.texts()).toContain("Column 2 (unnamed)");
+  await app.press("id:search-scope"); await app.press("text:Unnamed column · Column 4");
+  expect(app.texts()).toContain("Column 4 (unnamed)");
+});

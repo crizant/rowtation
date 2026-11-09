@@ -65,6 +65,7 @@ function DocumentView(props: { document: OpenDocument; onClose: () => void }) {
   const sensitive = signal(false);
   const regex = signal(false);
   const scoped = signal(false);
+  const scopeOpen = signal(false);
   const scopeId = signal<number | null>(null);
   const results = signal<SearchResult>({ count: 0, current: null });
   const matchIndex = signal(0);
@@ -359,6 +360,7 @@ function DocumentView(props: { document: OpenDocument; onClose: () => void }) {
   function closeFind() {
     findInput?.blur();
     finding.set(false);
+    scopeOpen.set(false);
     replacing.set(false);
     attempt(() => runSearch(false));
     clearTimeout(focusTimer);
@@ -424,7 +426,7 @@ function DocumentView(props: { document: OpenDocument; onClose: () => void }) {
   keymap.bind("f2", () => { if (finding() || editing()) return; beginEdit(); });
   keymap.bind("mod+f", openFind);
   effect(() => {
-    if (!finding() || exporting()) return;
+    if (!finding() || exporting() || scopeOpen()) return;
     if (editing()) {
       keymap.bind("shift+enter", () => editDraft.set(`${editDraft()}\n`), { when: "always" });
       return;
@@ -467,7 +469,7 @@ function DocumentView(props: { document: OpenDocument; onClose: () => void }) {
           <View class={roomy() ? "shrink-0 flex-row items-center gap-3" : wide() ? "flex-row items-center gap-3" : "gap-2"}>
             <View class={"min-w-0 flex-row items-center gap-2" + (wide() && !roomy() ? " flex-1" : "")}>
               <View class={roomy() ? "w-56 shrink-0" : "min-w-0 flex-1"}>
-                <SearchScope compact={wide()} columns={document.columns} value={scoped() ? scopeId() : null} onChange={id => {
+                <SearchScope open={scopeOpen()} onOpenChange={open => scopeOpen.set(open)} compact={wide()} columns={document.columns} value={scoped() ? scopeId() : null} onChange={id => {
                   scopeId.set(id); scoped.set(id != null); attempt(() => runSearch(true));
                 }} />
               </View>
