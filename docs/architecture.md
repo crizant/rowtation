@@ -149,12 +149,10 @@ spaces after closing quotes are errors. Backslash is not an escape character.
 Serialization uses standard necessary quoting (or always quotes when protecting a
 literal leading BOM), doubled quotes, LF separators and no transport BOM. It preserves cell values and row/column order, not source bytes or quote
 style. Trailing Missing fields are omitted to preserve short rows; interior Missing,
-Null and typed scalars fail with LOSSY_EXPORT until explicit conversion policies
-exist. With headers enabled, generated names become actual headers; original-name
+Null and typed scalars require the explicit conversion policies in [export.md](export.md). With headers enabled, generated names become actual headers; original-name
 provenance is not encoded in CSV. Empty documents serialize to empty bytes.
-Formula-like text stays literal: the engine never evaluates it, and does not add
-spreadsheet escaping that would change field values. A future download/conversion
-UI must explain spreadsheet safety and lossy mappings before altering text.
+The low-level delimited serializer keeps formula-like text literal. The export UI
+exposes formula-safe text and warns before lossy mappings; see [export.md](export.md).
 
 ## Errors and resource lifecycle
 
@@ -194,29 +192,12 @@ Dispose drops the document and all retained rows/strings. WASM's allocator may k
 freed linear-memory pages for reuse; disposal does not promise the browser shrinks
 its heap. Multiple sessions can coexist.
 
-## Verification and remaining work
+## Verification
 
-Rust tests cover parsing, invalid syntax/encoding, headers, empty/missing values,
-leading zeros, Unicode, round trips, identity, windows and lifecycle, imports past
-former caps (1 MiB values, 513 columns, 100,001 rows), previews on character
-boundaries, column ranges, sliced profiles, import sources, and the large-input
-measurements and flags. Inputs of tens of megabytes (a 32 MiB value, over a
-million fields, 20,000-column windows) and the benchmark live in the ignored
-`tests/stress.rs`. The NSH smoke tests cover typed results/arguments,
-failed constructors, serialization, and explicit disposal, with a test-only app
-entry to exercise the actual browser/WASM bridge, including a value over 1 MiB returned whole, as a preview
-and by its stable-ID read. Production UI tests open `App.tsx` and cover paste import, replacement after failure,
-responsive inspection, keyboard selection and offscreen row-window recycling.
-
-Verify `cargo fmt --check`, `nsh check`, `nsh build`, `nsh test`,
-`scripts/test-browser.sh`, `nsh package --target web -o dist` and
-`node scripts/web-metadata.mjs dist/Rowtation/index.html` and
-`node scripts/web-metadata.mjs --check dist/Rowtation/index.html` for changes. A web
-package verifies the in-memory csv dependency path compiles to wasm32; browser
-smoke tests verify runtime compatibility. The large-input thresholds are not
-large-file responsiveness benchmarks. Measure representative browsers before
-adding workers. Safe-text policy and structured export are described in export.md. Browser file and layout regressions run through the synthetic host
-used by scripts/test-browser-files.sh.
+See [validation](ui-validation.md) for commands, browser/file/package checks and
+visual review. Rust fixtures own data semantics; UI and bridge tests cover the
+registered API, session lifecycle, responsive workflows and virtualized windows.
+Opt-in performance fixtures record measurements without portable latency claims.
 
 ## Import and inspection UI
 

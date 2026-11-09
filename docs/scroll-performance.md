@@ -190,14 +190,6 @@ values/counts, and the largest slice. The before-#6 and after-#6 detailed record
 failed this gate (expected); the fixed recording passed. Raw CSVs, screenshots,
 traces and recordings are local artifacts and are not committed.
 
-Validation of this change: `cargo fmt --check`, native and wasm32 Clippy with
-warnings denied, `nsh check`, `nsh build`, 46 passing headless tests (two existing
-opt-in stress tests skipped), all 18 browser tests, and `nsh package --target web
--o dist` passed. The generated fixture's checksum was independently regenerated.
-The production Inspector screenshot showed the correct 2,000,000 unique IDs and
-five common values after scrolling.
-
-
 ## Custom cell renderer regression (PR #8)
 
 A later comparison uses main (`67a0344`), PR #8 (`4d2dfff`), that PR with only
@@ -265,16 +257,9 @@ for isolation remove only `renderCell`, package, then restore it. Use separate
 `--instrument --trace --cpu` runs for attribution and keep generated data,
 recordings and screenshots outside tracked source.
 
-Validation: `cargo fmt --check`, `nsh check`, `nsh build`, nine existing grid-cache
-tests, three new headless grid tests, and both browser grid tests pass. The browser
-command is `nsh test components/DataGrid.test.tsx --target web --filter 'grid pointer'`.
-The focused tests cover native/no-result rendering, highlight switches, occurrence
-underlines, plain copy, keyboard selection, double-click editing, distant cache
-jumps with Unicode, and headless touch long-press with and without highlights.
-Desktop/mobile screenshots were visually inspected, including the second
-occurrence, closed Find/native rendering, selection and the mobile editor.
-`nsh package --target web -o dist` passes. No stress tests or unrelated suites were
-run for this renderer change; Rust data logic is unchanged.
+Grid tests cover renderer switches, occurrence underlines, plain copy, keyboard
+selection, double-click editing and distant Unicode cache jumps. Run the focused
+browser suite with `nsh test components/DataGrid.test.tsx --target web`.
 
 Pre-existing browser limitation: the cell-menu long-press check fails on both
 unchanged PR #8 and the fix. This was reproduced with `app.longPress` and with
@@ -345,12 +330,3 @@ must not receive the later Inspector click. Earlier recordings' grid-only
 phases precede that later click and remain valid. Use separate `--instrument`
 runs for call attribution and optional `--screenshot` for visual inspection.
 The existing NSH compressed-scroll tiny-delta holds remain unchanged.
-
-Validation: `cargo fmt --check`, `nsh check`, `nsh build`, and web packaging
-(13.5 MB) passed. `nsh test` passed 125 tests with 8 existing opt-in
-benchmark/stress tests skipped. Browser runs passed all 25 app workflows, both
-grid workflows and all three new lifecycle/bridge-count regressions. The focused
-lifecycle tests were re-run headless and in the browser after tightening the
-initial-read and no-hit flag-call assertions. Desktop/mobile active Unicode
-occurrences, cleared highlights, and the scrolled production grid were visually
-inspected. Data, recordings and PNGs remain local and untracked.

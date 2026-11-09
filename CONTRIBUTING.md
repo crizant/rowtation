@@ -8,20 +8,8 @@ Use NSH CLI 0.4.0 and Rust dependencies aligned with that release. Install the
 WASM target and web tools described in README.md. Do not add native packaging
 or a second JavaScript data-processing implementation.
 
-For changes affecting Rust or TSX, run:
-
-```sh
-cargo fmt --check
-nsh check
-nsh build
-nsh test
-node --test scripts/web-metadata.test.mjs
-scripts/test-browser.sh
-scripts/test-browser-files.sh
-nsh package --target web -o dist
-node scripts/web-metadata.mjs dist/Rowtation/index.html
-node scripts/web-metadata.mjs --check dist/Rowtation/index.html
-```
+Follow the [validation workflow](docs/ui-validation.md) for Rust/TSX checks,
+browser and file tests, web packaging, production downloads and visual review.
 
 Test meaningful data behavior and malformed input in Rust with synthetic
 fixtures. Keep UI tests focused on meaningful workflows; avoid copying parser

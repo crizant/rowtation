@@ -67,22 +67,10 @@ resumes, and atomic rejection at the match limit.
 
 ## Browser verification
 
-Chromium (Playwright's cached Chrome for Testing, macOS arm64) passed the large
-search/restart test and all 25 production app workflows, including pending
-cancellation, stale-query suppression, closing Find, replacement/undo/redo,
-match selection, long-cell previews and mobile find. A browser probe of the
+A Chromium probe (cached Chrome for Testing, macOS arm64) of the
 40 MB fixture reported 6 slices, 10.0 ms longest call, 43.0 ms active scanning
 and 48.1 ms elapsed. Another run reported 5 slices, 9.2 ms longest call and
 41.4 ms elapsed. Those are single observations, not a hard latency guarantee.
-
-Final local checks passed: `cargo fmt --check`, `nsh check`, `nsh build`,
-`nsh test` (120 passed, 8 benchmark/stress tests skipped), all three ignored
-search benchmarks in release, and `nsh package --target web -o dist` (13.5 MB).
-The focused Rust suite was re-run after avoiding an unused regex iterator/cache
-on suspended cells. Mobile pending/cancelled states and desktop dark matching
-were visually inspected; mobile status keeps enough width for the full message.
-Generated screenshots, build output and synthetic inputs are not committed.
-
 
 ## PR #14 lifecycle and grid follow-up
 

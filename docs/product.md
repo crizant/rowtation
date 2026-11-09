@@ -58,11 +58,9 @@ Excel remains a possible future feature only.
   files above 8 MiB are confirmed before they are read.
   Measure representative browsers before claiming large-file support.
 
-## Decisions needed during implementation
+## Future scope
 
-- Structured import mapping and type rules are specified in structured-imports.md.
-- Header detection, encodings, delimiters and malformed-row recovery.
-- Persistence is not a current commitment. Search, sort, replacement and undo
-  behavior is specified in operations.md.
-
-Record these decisions with fixtures and tests before extending format support.
+Excel requires a separate compatibility and product decision. Persistent storage,
+session history, automatic header/type inference, additional encodings and
+malformed-input recovery are not current commitments. Specify behavior and add
+synthetic fixtures before extending support.

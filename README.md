@@ -23,10 +23,8 @@ session history. Closing an unmodified document releases its Rust session.
 Closing or replacing a modified document asks first, even after export; confirming discards those changes. Downloads do not reset the imported baseline. Import failures preserve
 the active document; a successful replacement releases the old session.
 
-See [export release validation](docs/export-release.md) for production-download checks and export screenshots.
-
-See [UI validation instructions](docs/ui-validation.md) for local desktop/mobile
-screenshot generation, visual inspection guidance, and browser validation commands.
+See [validation instructions](docs/ui-validation.md) for browser tests, production
+download checks, and desktop/mobile screenshot review.
 
 ## Document engine
 
@@ -194,6 +192,6 @@ DESIGN.md              UI standards
 AGENTS.md              Contributor and coding-agent constraints
 ```
 
-Read [product requirements](docs/product.md), [architecture](docs/architecture.md),
-[delivery plan](docs/roadmap.md) and [contribution guidance](CONTRIBUTING.md) before
+Read [product requirements](docs/product.md), [architecture](docs/architecture.md)
+and [contribution guidance](CONTRIBUTING.md) before
 implementing converter features.

@@ -92,11 +92,6 @@ commit in a detached worktree, copy the same benchmark there, build it separatel
 and set `ROWTATION_EXPECT_DENSE=1` when running that baseline. That flag disables
 only the new sparse-entry-count assertion; it changes no parsing/sorting code.
 
-Focused validation after the fixes: 53 affected Rust tests, seven headless
-structured UI tests and the same seven Chromium tests passed. Formatting,
-`nsh check`, `nsh build`, desktop/mobile visual inspection and web packaging
-passed. The whole application test suite was not rerun for this review follow-up.
-
 ## Sparse search follow-up
 
 Search now iterates sparse stored entries in schema order instead of looking up
@@ -141,8 +136,3 @@ For comparison, copy the same benchmark into a detached `9b38f87` worktree and
 set `ROWTATION_SEARCH_BASELINE=1` for that version. The flag records the known
 SEARCH_LIMIT failure instead of failing the benchmark; production code is
 unchanged. Fresh-process repeats can use Cargo's printed benchmark executable.
-
-Validation for this follow-up: 17 focused Rust tests passed (including exact
-64-MiB payload boundaries for dense and sparse rows), as did seven headless and
-seven Chromium structured UI tests. Formatting, NSH check/build and web packaging
-passed. The full application suite was not rerun; no UI layout was changed.
