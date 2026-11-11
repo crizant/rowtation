@@ -2,7 +2,7 @@
 
 ## Checks and web release
 
-Use NSH 0.4.0 and the toolchain in [README](../README.md). Run NSH commands
+Use NSH 0.5.0 and the toolchain in [README](../README.md). Run NSH commands
 serially: tests, the development server and packaging share generated runtime
 paths. Set `ROWTATION_BROWSER` to a Chromium executable when discovery fails.
 

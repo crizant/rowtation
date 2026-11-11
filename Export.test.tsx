@@ -22,13 +22,13 @@ test("mobile export contextual options warnings and failed conversion preserve d
   expect(app.texts()).not.toContain("Include column headers");
   await app.press("Copy"); await app.waitFor("Copied export text");
   const copied = app.clipboard();
-  await app.press("XML · XML"); await app.press("Accept these mapping changes");
+  await app.press("XML · XML"); await app.scroll("dialog-content", 600); await app.press("Accept these mapping changes");
   await app.press("Copy"); await app.waitFor("export-status");
   expect(app.clipboard()).toBe(copied);
   await app.press("Cancel"); await app.waitFor("Unmodified"); await app.waitFor("001");
   await app.press("Export…"); await app.press("CSV · CSV");
   expect(app.texts()).toContain("Accept these mapping changes");
-  await app.press("Accept these mapping changes"); await app.press("Copy"); await app.waitFor("Copied export text");
+  await app.scroll("dialog-content", 600); await app.press("Accept these mapping changes"); await app.press("Copy"); await app.waitFor("Copied export text");
   await app.keyboard.press("escape"); await app.waitFor("Unmodified");
 });
 

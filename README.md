@@ -1,6 +1,6 @@
 # Rowtation
 
-A browser-based data converter built with **Native Shell (NSH) v0.4.0**, using
+A browser-based data converter built with **Native Shell (NSH) v0.5.0**, using
 its **mixed template**: TSX renders the UI on the browser's JavaScript engine,
 and Rust compiles to WebAssembly for all data logic. **Web is the only delivery
 target.** There are no iOS, Android, native desktop or TUI builds.
@@ -76,13 +76,15 @@ Search also stops, with no partial matches, above 64 MiB of scoped text or
 See [architecture and API contracts](docs/architecture.md) for Rust/TSX usage,
 identity, error and disposal rules.
 See the [2-million-row production profile](docs/scroll-performance.md) for measured
-cache/Inspector costs and the remaining NSH scaled-scroll limitation.
+cache/Inspector costs and the scaled-scroll limitation observed with NSH 0.4.0.
 
 ## Development
 
 Prerequisites:
 
-- NSH CLI **0.4.0** (`nsh --version`). Keep NSH crates aligned with the CLI.
+- NSH CLI **0.5.0** (`nsh --version`). Keep NSH crates aligned with the CLI.
+  The web runtime is installed on demand; for offline use, run
+  `nsh component add web` beforehand.
 - Rust with Cargo and the `wasm32-unknown-unknown` standard library. With rustup,
   install it using `rustup target add wasm32-unknown-unknown`.
 - LLVM `clang` and `llvm-ar`, available on `PATH` for the mixed web build.
@@ -161,7 +163,7 @@ the website. Test imports against the deployed origin before release. Validate d
 
 Cloudflare Pages builds from the GitHub integration. Its build command is
 `sh scripts/cloudflare-pages-build.sh`, and its output directory is
-`dist/Rowtation`. The script installs the Linux toolchain, NSH 0.4.0, and the
+`dist/Rowtation`. The script installs the Linux toolchain, NSH 0.5.0, and the
 wasm-bindgen CLI version in `Cargo.lock`, runs `nsh package --target web -o dist`,
 then writes the page title and meta description into `dist/Rowtation/index.html`.
 NSH’s page template has no description field, so that stamp is what puts them in

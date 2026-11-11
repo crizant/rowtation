@@ -1,6 +1,6 @@
 import { expect, open, test } from "nsh/test";
 
-// NSH 0.4 cannot emulate an iOS platform in its web test host.
+// NSH's web test host cannot emulate an iOS platform.
 // This checks the touch handler through headless dispatch; physical browser
 // long-press is a separate, documented NSH hit-layer limitation.
 test("grid mobile long-press edits the held cell with and without highlights", async () => {

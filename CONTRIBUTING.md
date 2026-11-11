@@ -4,7 +4,7 @@ Read [AGENTS.md](AGENTS.md), [product scope](docs/product.md),
 [architecture](docs/architecture.md) and [UI standards](DESIGN.md) before editing.
 Keep implemented behavior distinct from plans.
 
-Use NSH CLI 0.4.0 and Rust dependencies aligned with that release. Install the
+Use NSH CLI 0.5.0 and Rust dependencies aligned with that release. Install the
 WASM target and web tools described in README.md. Do not add native packaging
 or a second JavaScript data-processing implementation.
 
@@ -37,11 +37,11 @@ requests targeting `main`, pushes to `main`, and manual workflow runs:
 
 The two NSH jobs share a matrix definition with fail-fast disabled, so a failure
 in one suite does not cancel the other. Each gets its own runner and uses NSH
-0.4.0 and Ubuntu 24.04's installed Chrome and LLVM tools.
+0.5.0 and Ubuntu 24.04's installed Chrome and LLVM tools.
 
 Two caches reduce setup and compilation time:
 
-- NSH's web-only distribution and downloaded TypeScript compiler, keyed by the
+- NSH's distribution, web component and downloaded TypeScript compiler, keyed by the
   NSH release, operating system and architecture.
 - Cargo registry/git dependencies, `target/` (native and WASM builds), and NSH's
   generated runner workspace in `.nsh/rust/`. Keys include the compiler identity,

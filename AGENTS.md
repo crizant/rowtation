@@ -2,7 +2,7 @@
 
 ## Stack and targets
 
-- Use Native Shell (NSH) **v0.4.0**, **mixed template**.
+- Use Native Shell (NSH) **v0.5.0**, **mixed template**.
 - Write UI in TSX; on web it runs on the browser's JavaScript engine.
 - Put all data logic in Rust compiled to WASM: parsing, format detection,
   normalization, validation, sorting, searching, editing, replacement and export.

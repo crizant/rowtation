@@ -1,8 +1,8 @@
 #!/bin/sh
 # Set ROWTATION_BROWSER when Chromium is outside NSH's default discovery paths.
 set -eu
-# NSH 0.4.0 reads a real browser host only from nsh.json. Restore the exact
-# configuration on exit (including test failures); no test host is packaged.
+# Restore the exact configuration on exit (including test failures); no test
+# host is packaged.
 rowtation_config_backup=$(mktemp)
 cp nsh.json "$rowtation_config_backup"
 trap 'cp "$rowtation_config_backup" nsh.json; rm -f "$rowtation_config_backup"' EXIT

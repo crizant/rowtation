@@ -26,7 +26,7 @@ export AR_wasm32_unknown_unknown="$HOME/.local/wasi-sdk/bin/llvm-ar"
 clang --version
 llvm-ar --version
 
-export NSH_VERSION=v0.4.0
+export NSH_VERSION=v0.5.0
 curl -fsSL "https://github.com/longbridge/nsh/releases/download/${NSH_VERSION}/install.sh" | sh
 
 # Browser file APIs need the wasm-bindgen CLI that matches Cargo.lock.

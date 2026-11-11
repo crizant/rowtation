@@ -7,8 +7,8 @@ publish = false
 [workspace]
 
 [dependencies]
-nsh-core = "0.4.0"
-nsh-base = "0.4.0"
+nsh-core = "0.5.0"
+nsh-base = "0.5.0"
 csv = "1.4.0"
 hashbrown = { version = "0.17.1", default-features = false }
 rustc-hash = "2.1.3"

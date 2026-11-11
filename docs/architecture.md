@@ -2,7 +2,7 @@
 
 ## Execution and ownership
 
-Rowtation uses NSH **0.4.0**, mixed template, with `rust: "."` and no `root`
+Rowtation uses NSH **0.5.0**, mixed template, with `rust: "."` and no `root`
 in `nsh.json`. TSX runs on the browser JavaScript engine; Rust compiles to WASM.
 No backend, cloud storage, persistent document storage or telemetry is introduced.
 
@@ -21,7 +21,7 @@ through the registered API. Mutations invalidate cached and in-progress profiles
 
 `#[native_module("rowtation/native")]` registers `DocumentSession` using
 `Registry::class`. `#[class]`, `#[derive(JsObject)]`, `#[derive(PropEnum)]` and
-synchronous `Result<T, E>` use actual NSH 0.4.0 APIs, checked against resolved
+synchronous `Result<T, E>` use actual NSH 0.5.0 APIs, checked against resolved
 `nsh-core`/`nsh-macros` sources and generated `.nsh/types/rowtation/native.d.ts`.
 No JSON-string protocol or separate WASM bridge is used.
 

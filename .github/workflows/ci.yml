@@ -15,7 +15,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  NSH_VERSION: v0.4.0
+  NSH_VERSION: v0.5.0
   # Keep reusable dependency artifacts small enough to restore quickly.
   CARGO_PROFILE_DEV_DEBUG: '0'
   CARGO_INCREMENTAL: '0'
@@ -78,9 +78,8 @@ jobs:
           NSH_INSTALL_DIR: ${{ github.workspace }}/.nsh/cli
         run: |
           curl --fail --location --retry 3 "https://github.com/longbridge/nsh/releases/download/$NSH_VERSION/install.sh" | sh
-          # Retain the web runtime; CI does not use the other bundled platforms.
-          find "$NSH_INSTALL_DIR/runtime" -mindepth 1 -maxdepth 1 ! -name web -exec rm -rf {} +
-          rm -rf "$NSH_INSTALL_DIR/embed"
+          # NSH 0.5 installs the web runtime as a separate component.
+          "$NSH_INSTALL_DIR/bin/nsh" component add web
 
       - name: Add NSH to PATH
         run: |
