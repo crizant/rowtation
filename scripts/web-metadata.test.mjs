@@ -8,6 +8,7 @@ import {
   assertMetadataBeforeScripts,
   escapeHtmlAttribute,
   escapeHtmlText,
+  googleSiteVerification,
   htmlTitle,
   metaDescription,
   stampIndexHtml,
@@ -29,13 +30,15 @@ const packaged = `<!doctype html>
 </html>
 `;
 
-test("inserts the title and description into the head before any script", () => {
+test("inserts metadata into the head before any script", () => {
   const html = stampIndexHtml(packaged);
   const head = html.slice(0, html.search(/<\/head>/i));
   assert.equal(head.includes(`<title>${escapeHtmlText(htmlTitle)}</title>`), true);
   assert.equal(head.includes(`<meta name="description" content="${escapeHtmlAttribute(metaDescription)}">`), true);
+  assert.equal(head.includes(`<meta name="google-site-verification" content="${googleSiteVerification}">`), true);
   assert.ok(head.indexOf("<title>") < head.indexOf("<script"));
   assert.ok(head.indexOf('name="description"') < head.indexOf("<script"));
+  assert.ok(head.indexOf('name="google-site-verification"') < head.indexOf("<script"));
   assert.equal(head.includes("document.title"), false);
   assertMetadataBeforeScripts(html);
 });
@@ -43,8 +46,9 @@ test("inserts the title and description into the head before any script", () => 
 test("stamping again leaves the document unchanged", () => {
   const once = stampIndexHtml(packaged);
   assert.equal(stampIndexHtml(once), once);
-  const withOld = stampIndexHtml(packaged.replace("</title>", '</title>\n<meta name="description" content="old &amp; stale">'));
+  const withOld = stampIndexHtml(packaged.replace("</title>", '</title>\n<meta name="description" content="old &amp; stale">\n<meta name="google-site-verification" content="stale">'));
   assert.equal(withOld.match(/name="description"/g).length, 1);
+  assert.equal(withOld.match(/name="google-site-verification"/g).length, 1);
   assert.equal(withOld.includes("stale"), false);
   assert.equal(stampIndexHtml(withOld), withOld);
 });

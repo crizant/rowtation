@@ -165,8 +165,8 @@ Cloudflare Pages builds from the GitHub integration. Its build command is
 `sh scripts/cloudflare-pages-build.sh`, and its output directory is
 `dist/Rowtation`. The script installs the Linux toolchain, NSH 0.5.1, and the
 wasm-bindgen CLI version in `Cargo.lock`, runs `nsh package --target web -o dist`,
-then writes the page title and meta description into `dist/Rowtation/index.html`.
-NSH’s page template has no description field, so that stamp is what puts them in
+then writes the page title, meta description and Google site verification tag into `dist/Rowtation/index.html`.
+The metadata stamp puts them in
 the HTML before any script runs. `nsh run` still serves NSH’s development page.
 It is for the Pages Linux image; local macOS builds use the commands above.
 
