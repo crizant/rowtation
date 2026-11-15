@@ -15,7 +15,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  NSH_VERSION: v0.5.0
+  NSH_VERSION: v0.5.1
   # Keep reusable dependency artifacts small enough to restore quickly.
   CARGO_PROFILE_DEV_DEBUG: '0'
   CARGO_INCREMENTAL: '0'
