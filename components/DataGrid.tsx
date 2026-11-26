@@ -101,6 +101,14 @@ export function DataGrid(props: {
   // Pointer desktops get a denser grid; touch layouts keep 44-point rows.
   const dense = () => platform.desktop && windowSize().width >= 900;
   const columnWidth = () => windowSize().width < 640 ? 148 : 176;
+  // Widths the user dragged, by column key. Plain storage: the table owns the width during a
+  // drag, so mirroring it into a signal would only rebuild the columns at every step.
+  let resized = new Map<string, number>();
+  let resizedDocument = props.metadata.id;
+  const widthOf = (column: ColumnMetadata) => {
+    if (resizedDocument !== props.metadata.id) { resizedDocument = props.metadata.id; resized = new Map(); }
+    return resized.get(String(column.id)) ?? columnWidth();
+  };
   // Keep a stable renderer identity: a row-window refill must not reset the
   // table's renderCell prop. Ordinary pointer cells use NSH's native text path.
   // Touch cells retain the lightweight wrapper for NSH 0.4's onLongPress event.
@@ -129,7 +137,7 @@ export function DataGrid(props: {
     });
     return <View testID={cell.matched ? "search-highlight" : "grid-custom-cell"}
       onLongPress={() => props.onCellMenu(cell.row, cell.column, 16, 120)}
-      style={{ height: dense() ? 30 : 40, width: columnWidth() - 24 }}
+      style={{ height: dense() ? 30 : 40, width: widthOf(props.columns[cell.column]) - 24 }}
       class={"justify-center rounded" + (cell.matched ? " bg-primary/15" : "")}>
       <If when={occurrence()} else={<Text class="text-[13px] text-foreground line-clamp-1">{cell.text}</Text>}>
         {split => <Text class="text-[13px] text-foreground line-clamp-1">{split().before}<Text
@@ -143,10 +151,11 @@ export function DataGrid(props: {
     ref={ref => { table = ref; table.select(selection()); }} sort={props.sort} onSortChange={e => props.onSort(e.sort)}
     onDoublePress={e => { if (e.target.row != null && e.target.column != null) props.onEdit(e.target.row, e.target.column); }}
     onContextMenu={e => { if (e.row != null && e.column != null) props.onCellMenu(e.row, e.column, e.x, e.y); }}
-    columns={props.columns.map((column) => ({ key: String(column.id), sortable: true, title: column.name || "(unnamed)", width: columnWidth() }))}
+    columns={props.columns.map((column) => ({ key: String(column.id), sortable: true, title: column.name || "(unnamed)", width: widthOf(column) }))}
+    onColumnResize={e => resized.set(e.key, e.width)}
     data={tableData()} dataStart={rows().offset} rowCount={props.metadata.rowCount}
     rowHeight={dense() ? 34 : 44} headerHeight={dense() ? 36 : 44} fontSize={13} rowHeader cellSelectable columnSelectable rowSelectable={false}
-    movableColumns={false} resizableColumns={false} selectOnModifierPress={false} stripe={false} selection={selection()}
+    movableColumns={false} resizableColumns selectOnModifierPress={false} stripe={false} selection={selection()}
     onVisibleRowsChange={e => { visibleRows = e.range; load(); }}
     onVisibleColumnsChange={e => { visibleColumns = e.range; load(); }} onSelectionChange={e => select(e.selection)}
     renderHeaderCell={cell => <View class="flex-1 flex-row items-center gap-2 px-3">
