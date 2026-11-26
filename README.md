@@ -197,3 +197,9 @@ AGENTS.md              Contributor and coding-agent constraints
 Read [product requirements](docs/product.md), [architecture](docs/architecture.md)
 and [contribution guidance](CONTRIBUTING.md) before
 implementing converter features.
+
+## License
+
+Rowtation is licensed under the [Apache License 2.0](LICENSE). Icons in
+`components/icons/` keep their own license; see
+[components/icons/LICENSE](components/icons/LICENSE).
